@@ -11,6 +11,15 @@ const BRIDGE_FILE = path.join(HOME, "bridge.json");
 const STORE_FILE = path.join(HOME, "app_ui.json");
 
 let win = null;
+
+// What happened to the window, for when it "disappears": ~/.scene_manager/app.log (kept small).
+const LOG_FILE = path.join(HOME, "app.log");
+function log(text) {
+  try {
+    if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > 200000) fs.renameSync(LOG_FILE, LOG_FILE + ".old");
+    fs.appendFileSync(LOG_FILE, new Date().toISOString() + " " + text + "\n");
+  } catch (_) { /* logging must never break the app */ }
+}
 let store = {};
 try { store = JSON.parse(fs.readFileSync(STORE_FILE, "utf8")); } catch (_) { store = {}; }
 let saveTimer = null;
@@ -191,7 +200,8 @@ function createWindow() {
   if (process.env.SM_DEV_URL) win.loadURL(process.env.SM_DEV_URL);
   else win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   win.once("ready-to-show", () => { setOwner(maxHwnd); win.show(); });   // owner first: no taskbar button flashes up
-  win.on("minimize", () => { win.restore(); setRolled(true); });
+  for (const ev of ["minimize", "restore", "maximize", "unmaximize", "hide", "show", "focus", "blur"])
+    win.on(ev, () => log("window " + ev + (owned ? " (attached)" : "")));
   const remember = () => {
     if (!rolled && !win.isMaximized() && !win.isMinimized()) { store.window = win.getBounds(); saveStore(); }
   };
@@ -222,7 +232,23 @@ if (!app.requestSingleInstanceLock()) {
       return !!on;
     });
     ipcMain.handle("sm:roll", (_e, on) => setRolled(!!on));
+    // The title bar is moved by us, not by Windows. As a system title bar (app-region: drag) Windows applied its
+    // own title bar behaviour to it: shaking it minimizes every other window, 3ds Max included, and an attached
+    // window disappears with Max. Here a press only records where the pointer is, and moves follow the pointer.
+    let drag = null;
+    ipcMain.on("sm:drag", (_e, phase, x, y) => {   // x, y: pointer on the screen
+      if (!win || win.isDestroyed()) return;
+      const p = { x: Math.round(Number(x) || 0), y: Math.round(Number(y) || 0) };
+      if (phase === "start") {
+        if (win.isMaximized()) { drag = null; return; }
+        const b = win.getBounds();
+        drag = { dx: p.x - b.x, dy: p.y - b.y, w: b.width, h: b.height };
+      } else if (phase === "move" && drag) {
+        win.setBounds({ x: p.x - drag.dx, y: p.y - drag.dy, width: drag.w, height: drag.h });   // size passed too: it must not creep on scaled screens
+      } else if (phase === "end") drag = null;
+    });
     ipcMain.on("sm:win", (_e, what) => {
+      log("button " + what);
       if (what === "minimize") setRolled(!rolled);
       else if (what === "maximize") win.isMaximized() ? win.unmaximize() : win.maximize();
       else if (what === "close") win.close();

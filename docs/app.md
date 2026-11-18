@@ -62,3 +62,10 @@ Handshake: after each connect the app calls `ui_app_attach(hwnd)` and gets the M
 - Nothing overlaps: a card that grows or is resized pushes the cards under it down (`grid.ts` `layout`).
 - Smallest card: wide enough for its full title and for label + value + tick (15 dots, tables 22), tall enough for the header
   and about three rows. A card smaller than its rows scrolls them under a fixed header.
+
+## Title bar
+
+The title bar is not a system title bar (`-webkit-app-region: drag` is not used). `App.tsx` `dragBar` follows the pointer and
+`main.cjs` `sm:drag` moves the window. Reason: as a system title bar Windows applied its own behaviour to it (shaking it minimizes
+all other windows, 3ds Max included, and the attached app window then disappears with Max). Window events and title bar buttons
+are written to `~/.scene_manager/app.log`.

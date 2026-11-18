@@ -20,5 +20,6 @@ contextBridge.exposeInMainWorld("sm", {
     setOnTop: (on) => ipcRenderer.invoke("sm:on-top", !!on),
     setAttach: (on) => ipcRenderer.invoke("sm:attach", !!on),
     roll: (on) => ipcRenderer.invoke("sm:roll", !!on),
+    drag: (phase, x, y) => ipcRenderer.send("sm:drag", phase, x, y),
   },
 });

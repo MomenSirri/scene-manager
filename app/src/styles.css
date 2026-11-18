@@ -30,7 +30,7 @@ h3 { font-size: 11px; font-weight: 600; letter-spacing: .4px; text-transform: up
     radial-gradient(50% 50% at 55% 100%, rgba(16, 120, 150, .22), transparent 70%),
     linear-gradient(#0d0d12, #08080b); }
 .titlebar { height: 36px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 4px 0 12px;
-  background: rgba(10, 10, 12, .5); border-bottom: 1px solid var(--line); -webkit-app-region: drag; user-select: none; }
+  background: rgba(10, 10, 12, .5); border-bottom: 1px solid var(--line); user-select: none; touch-action: none; }   /* moved by App.tsx, not a system title bar */
 .titlebar .title { font-weight: 600; } .titlebar .file { font-size: 11px; }
 .win-btn { -webkit-app-region: no-drag; width: 34px; height: 26px; border: 0; border-radius: 6px; background: none; color: var(--l2); display: grid; place-items: center; }
 .app.rolled > :not(.titlebar), .app.rolled .titlebar .file, .app.rolled .win-btn.max, .app.rolled .win-btn.pin { display: none; }

@@ -184,9 +184,28 @@ export function App() {
     return it ? (it.parent ? pathOf(it.parent) + " / " : "") + it.name : "";
   };
 
+  // Moving the window: the pointer is followed by the app itself (see main.cjs "sm:drag").
+  const dragBar = (e: React.PointerEvent<HTMLElement>) => {
+    if (!inApp || e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+    const bar = e.currentTarget, id = e.pointerId;
+    let frame = 0, x = e.screenX, y = e.screenY;
+    const move = (ev: PointerEvent) => {
+      x = ev.screenX; y = ev.screenY;
+      if (!frame) frame = requestAnimationFrame(() => { frame = 0; window.sm!.win.drag("move", x, y); });
+    };
+    const end = () => {
+      bar.removeEventListener("pointermove", move); bar.removeEventListener("pointerup", end); bar.removeEventListener("pointercancel", end);
+      try { bar.releasePointerCapture(id); } catch (_) { /* already released */ }
+      window.sm!.win.drag("end");
+    };
+    bar.setPointerCapture(id);
+    bar.addEventListener("pointermove", move); bar.addEventListener("pointerup", end); bar.addEventListener("pointercancel", end);
+    window.sm!.win.drag("start", x, y);
+  };
+
   return (
     <div className={"app" + (wnd.rolled ? " rolled" : "")} onKeyDown={onKey} tabIndex={-1}>
-      <header className="titlebar">
+      <header className="titlebar" onPointerDown={dragBar} onDoubleClick={(e) => { if (inApp && !wnd.rolled && !(e.target as HTMLElement).closest("button")) window.sm!.win.maximize(); }}>
         <Icon name="setups" size={16} color="#64d2ff" />
         <span className="title">Scene Manager</span>
         {state?.file && <span className="muted file">{state.file}</span>}
