@@ -62,12 +62,15 @@ function NumberField({ p, value, onChange, disabled }: { p: PropSchema; value: a
     stepKeys={(dir, t) => fmt(clamp((Number(t.replace(",", ".")) || 0) + dir * (p.kind === "int" ? 1 : p.step || 1)), p)} />;
 }
 
-function Select({ value, options, onChange, disabled, title }: { value: string; options: string[]; onChange: (v: string) => void; disabled?: boolean; title?: string }) {
-  const opts = options.includes(value) || value === "" ? options : [value, ...options];
+function Select({ value, options, onChange, disabled, title, labels }: { value: string; options: string[]; onChange: (v: string) => void; disabled?: boolean; title?: string; labels?: Record<string, string> }) {
+  const known = options.includes(value) || value === "";
+  const opts = known ? options : [value, ...options];
+  // a stored value that is not on offer here (a renderer this 3ds Max does not have) stays visible, marked
+  const text = (o: string) => (labels?.[o] ?? o) + (labels && !known && o === value ? " (not installed)" : "");
   return (
     <span className={"input select" + (disabled ? " disabled" : "")}>
       <select value={value} disabled={disabled} title={title} onChange={(e) => onChange(e.target.value)}>
-        {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+        {opts.map((o) => <option key={o} value={o}>{text(o)}</option>)}
       </select>
     </span>
   );
@@ -170,7 +173,7 @@ export function Field({ p, row, nodes, disabled, onChange }: { p: PropSchema; ro
   switch (p.kind) {
     case "int": case "float": return <NumberField p={p} value={v} onChange={onChange} disabled={disabled} />;
     case "bool": return <span className="field-switch"><Switch on={!!v} onChange={onChange} disabled={disabled} title={p.tip} /></span>;
-    case "enum": return <Select value={v == null ? "" : String(v)} options={p.options} onChange={onChange} disabled={disabled} title={p.tip} />;
+    case "enum": return <Select value={v == null ? "" : String(v)} options={p.options} labels={p.labels} onChange={onChange} disabled={disabled} title={p.tip} />;
     case "camera": case "sunlight": case "light":
       return <Select value={v?.name ?? "(none)"} options={["(none)", ...(nodes[p.kind] || [])]} onChange={onChange} disabled={disabled} title={p.tip} />;
     case "table": return <Table p={p} row={row} onChange={onChange} />;

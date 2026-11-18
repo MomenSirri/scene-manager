@@ -56,6 +56,11 @@ class PostProductionModule(Module):
         Prop("corona_tonemap", "Corona tone mapping", "rdiff",
              tip="Corona tone mapping values. Fetch from scene to store the current ones."),
     ]
+    props[0].kinds = ("vray", "vray_gpu")
+    props[1].kinds = ("corona",)
+
+    def installed(self):
+        return any(p.installed() for p in self.props)
 
     def available(self):
         return False   # add with + Module, then Fetch

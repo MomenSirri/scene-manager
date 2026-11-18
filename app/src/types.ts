@@ -1,9 +1,10 @@
 export interface PropSchema {
   key: string; label: string; kind: string; options: string[]; tip: string; suffix: string;
   decimals: number; step: number; min?: number; max?: number; columns?: PropSchema[];
+  installed?: boolean; labels?: Record<string, string>;
 }
 export interface ModuleSchema {
-  key: string; label: string; group: string; column: string | null; available: boolean;
+  key: string; label: string; group: string; column: string | null; available: boolean; installed?: boolean;
   touches_scene: boolean; props: PropSchema[];
 }
 export interface Group { key: string; label: string; icon: string; tint: string }

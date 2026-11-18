@@ -667,8 +667,9 @@ class Panel(QtWidgets.QWidget):
         lay.addWidget(note)
         self.queue = QtWidgets.QTreeWidget()
         self.queue.setObjectName("SMTree")
-        self.queue.setHeaderLabels(["Setup", "Camera", "Size", "Frames", "Output"])
+        self.queue.setHeaderLabels(["Setup", "Camera", "Size", "Frames", "Checks", "Output"])
         self.queue.setRootIsDecorated(False)
+        self.queue.setColumnWidth(4, 180)
         lay.addWidget(self.queue, 1)
         row = QtWidgets.QHBoxLayout()
         row.addStretch(1)
@@ -997,10 +998,16 @@ class Panel(QtWidgets.QWidget):
 
     def refresh_queue(self):
         self.queue.clear()  # only called while the Render page is open
-        for s in batch.expand(self.mgr, sorted(self.checked, key=self._order_index)):
-            QtWidgets.QTreeWidgetItem(self.queue, [
+        for entry in batch.preflight(self.mgr, sorted(self.checked, key=self._order_index)):
+            s = entry.setup
+            checks = ", ".join(entry.issues)
+            row = QtWidgets.QTreeWidgetItem(self.queue, [
                 self.mgr.path(s), self.mgr.summary(s, "camera"), self.mgr.summary(s, "output"),
-                self.mgr.summary(s, "time"), batch.planned_output(self.mgr, s)])
+                self.mgr.summary(s, "time"), checks, entry.output])
+            row.setToolTip(5, entry.output)
+            if checks:
+                row.setToolTip(4, "\n".join(entry.issues))
+                row.setForeground(4, QtGui.QColor(theme.ORANGE))
 
     def _order_index(self, iid):
         ids = [i["id"] for i in self.mgr.items]
@@ -1147,15 +1154,32 @@ class Panel(QtWidgets.QWidget):
     @_guard
     def on_render(self, ids):
         ids = [i for i in ids if i]
-        setups = batch.expand(self.mgr, ids)
+        setups = batch.preflight(self.mgr, ids)
         if not setups:
             return
-        dups = batch.duplicate_outputs(self.mgr, ids)
-        if dups:
-            text = "\n".join("%s and %s -> %s" % d for d in dups)
-            if QtWidgets.QMessageBox.question(self, "Duplicate outputs",
-                                              "These setups write to the same file:\n%s\n\nRender anyway?" % text) \
-                    != QtWidgets.QMessageBox.Yes:
+        flagged = [entry for entry in setups if entry.issues]
+        if flagged:
+            warning = QtWidgets.QMessageBox(self)
+            warning.setWindowTitle("Render queue checks")
+            warning.setIcon(QtWidgets.QMessageBox.Warning)
+            warning.setTextFormat(QtCore.Qt.PlainText)
+            warning.setText(f"Checks found issues in {len(flagged)} of {len(setups)} queued setups.")
+            summaries = [
+                f"{self.mgr.path(entry.setup)} ({', '.join(entry.issues)})"
+                for entry in flagged
+            ]
+            preview = summaries[:4]
+            if len(summaries) > len(preview):
+                preview.append(f"{len(summaries) - len(preview)} more in Show Details")
+            warning.setInformativeText("\n".join(preview))
+            warning.setDetailedText("\n".join(
+                f"{summary}\n  {entry.output}" if entry.output else summary
+                for summary, entry in zip(summaries, flagged)
+            ))
+            warning.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.Cancel)
+            warning.button(QtWidgets.QMessageBox.Yes).setText("Render anyway")
+            warning.setDefaultButton(QtWidgets.QMessageBox.Cancel)
+            if warning.exec() != QtWidgets.QMessageBox.Yes:
                 return
         dlg = QtWidgets.QProgressDialog("Rendering...", "Stop after current", 0, len(setups), self)
         dlg.setWindowModality(QtCore.Qt.WindowModal)
@@ -1305,7 +1329,9 @@ class ModulePalette(QtWidgets.QFrame):
         for key, label, icon_name, tint in groups.GROUPS:
             if category and key != category:
                 continue
-            mods = groups.modules_in(key, all_mods)
+            # modules for a renderer that is not installed are not offered (a card already on the item stays)
+            mods = [m for m in groups.modules_in(key, all_mods)
+                    if m.installed() or mgr.module_state(item, m.key)["enabled"]]
             if not mods:
                 continue
             head = QtWidgets.QHBoxLayout()

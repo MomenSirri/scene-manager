@@ -335,7 +335,7 @@ function Palette({ schema, detail, category, onAdd, onClose }: { schema: Schema;
     <div ref={ref} className="palette">
       <h1>Add module</h1>
       {schema.groups.filter((g) => !category || g.key === category).map((g) => {
-        const mods = schema.modules.filter((m) => m.group === g.key);
+        const mods = schema.modules.filter((m) => m.group === g.key && (m.installed !== false || on.has(m.key)));
         return mods.length === 0 ? null : (
           <div key={g.key}>
             <h3><Icon name={g.icon} size={14} color={g.tint} /> {g.label}</h3>

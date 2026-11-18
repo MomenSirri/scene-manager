@@ -28,8 +28,9 @@ class RendererModule(Module):
     order = 8          # before every module that sets renderer properties
     category = "render"
     column = "Renderer"
-    props = [Prop("renderer", "Renderer", "enum", options=["vray", "vray_gpu", "corona", "arnold", "scanline", "art"],
+    props = [Prop("renderer", "Renderer", "enum", options=rprops.installed_kinds,   # only what this 3ds Max has
                   tip="Switching renderer starts it from its defaults; the settings cards below then apply.")]
+    props[0].labels = rprops.KIND_LABELS
 
     def capture(self):
         return {"renderer": rprops.current_kind()}
@@ -50,6 +51,9 @@ class RendererSettings(Module):
 
     def available(self):
         return rprops.current_kind() in self.kinds
+
+    def installed(self):
+        return rprops.is_installed(*self.kinds)
 
     def capture(self):
         if not self.available():

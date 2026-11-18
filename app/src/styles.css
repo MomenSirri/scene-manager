@@ -136,13 +136,14 @@ h3 { font-size: 11px; font-weight: 600; letter-spacing: .4px; text-transform: up
 .row .field { grid-column: 3; grid-row: 1; min-width: 0; } .row .tick { grid-column: 4; grid-row: 1; }
 .row.wide { grid-template-columns: 9px minmax(0, 1fr) 16px; } .row.wide .tick { grid-column: 3; } .row.wide .field { grid-column: 1 / -1; grid-row: 2; }
 .field-switch { display: flex; justify-content: center; }
-.grip { position: absolute; right: 2px; bottom: 2px; width: 16px; height: 16px; cursor: nwse-resize; opacity: 0; transition: opacity .12s; touch-action: none; }
+.grip { position: absolute; right: 2px; bottom: 2px; width: 16px; height: 16px; cursor: nwse-resize; opacity: .3; transition: opacity .12s; touch-action: none; }
 .grip::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 8px; height: 8px; border: solid var(--teal); border-width: 0 2px 2px 0; border-radius: 0 0 4px 0; }
 .card:hover .grip, .card.resizing .grip { opacity: 1; }
 /* where the card will land: glowing box, and the dots under it light up */
 .glow { position: absolute; border-radius: 14px; border: 1.8px solid var(--teal); pointer-events: none; z-index: 10;
   box-shadow: 0 0 0 3px rgba(42, 212, 196, .16), 0 0 22px 2px rgba(42, 212, 196, .55), inset 0 0 18px rgba(42, 212, 196, .14);
   transition: left .09s, top .09s, width .09s, height .09s; animation: breathe 1.4s ease-in-out infinite; }
+.glow.limit { border-style: dashed; }   /* the card is at its smallest usable size */
 .glow.fill { background: rgba(42, 212, 196, .10); }
 .hot-dots { position: absolute; pointer-events: none; z-index: 0; transition: left .09s, top .09s, width .09s, height .09s;
   background-image: radial-gradient(circle, rgba(42, 212, 196, 1) 1.6px, transparent 2.2px); background-size: var(--grid) var(--grid); }

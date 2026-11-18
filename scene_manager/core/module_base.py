@@ -23,6 +23,23 @@ class Prop:
         self.minimum, self.maximum, self.decimals = minimum, maximum, decimals
         self.suffix, self.tip, self.step = suffix, tip, step
 
+    labels = None     # optional {option: text shown} for kind "enum"
+    kinds = ()        # renderer kinds this value belongs to; () = any. Hidden when none of them is installed.
+
+    def option_list(self):
+        """`options` as a list; it may be a callable so the list can come from the scene (installed renderers)."""
+        opts = self.options
+        if callable(opts):
+            try:
+                opts = opts()
+            except Exception:
+                opts = []
+        return list(opts or [])
+
+    def installed(self):
+        from ..render import rprops
+        return rprops.is_installed(*self.kinds)
+
 
 class Module:
     key = ""          # stored in the scene, never change once released
@@ -97,6 +114,11 @@ class Module:
     def available(self):
         """False = left out of the default module list of a new setup (e.g. another renderer's settings).
         Explicit requests (+ Module, capture with keys) still capture it."""
+        return True
+
+    def installed(self):
+        """False = this module is for a renderer that is not installed here: it is not offered in Add Module.
+        A setup that already carries it (a shared preset) still shows its card."""
         return True
 
     def capture_baseline(self, mgr):

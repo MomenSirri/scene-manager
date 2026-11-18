@@ -22,15 +22,18 @@ def _renderer():
         return "?"
 
 
+def _installed(thing):
+    try:
+        return bool(thing.installed())
+    except Exception:
+        return True
+
+
 def _prop_schema(p):
-    opts = p.options
-    if callable(opts):
-        try:
-            opts = list(opts())
-        except Exception:
-            opts = []
-    d = {"key": p.key, "label": p.label, "kind": p.kind, "options": list(opts or []), "tip": p.tip,
-         "suffix": p.suffix, "decimals": p.decimals, "step": p.step}
+    d = {"key": p.key, "label": p.label, "kind": p.kind, "options": p.option_list(), "tip": p.tip,
+         "suffix": p.suffix, "decimals": p.decimals, "step": p.step, "installed": _installed(p)}
+    if getattr(p, "labels", None):
+        d["labels"] = dict(p.labels)
     if p.kind in ("int", "float"):
         d["min"], d["max"] = p.minimum, p.maximum
     if p.columns:
@@ -47,7 +50,7 @@ def ui_schema():
         except Exception:
             available = True
         mods.append({"key": m.key, "label": m.label, "group": groups.group_of(m), "column": m.column,
-                     "available": available, "touches_scene": bool(getattr(m, "touches_scene", True)),
+                     "available": available, "installed": _installed(m), "touches_scene": bool(getattr(m, "touches_scene", True)),
                      "props": [_prop_schema(p) for p in m.props]})
     return {"groups": [{"key": k, "label": l, "icon": i, "tint": t} for k, l, i, t in groups.GROUPS],
             "modules": mods}

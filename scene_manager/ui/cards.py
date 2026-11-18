@@ -89,7 +89,7 @@ class PropWidget(QtWidgets.QWidget):
             w.toggled.connect(lambda *_: self.changed.emit())
         elif k == "enum":
             w = QtWidgets.QComboBox()
-            w.addItems(list(prop.options))
+            w.addItems(prop.option_list())
             if value is not None:
                 w.setCurrentText(str(value))
             w.activated.connect(lambda *_: self.changed.emit())

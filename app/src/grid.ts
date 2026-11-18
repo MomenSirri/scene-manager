@@ -3,8 +3,12 @@
 export const GRID = 18;   // px between dots
 export const GAP = 1;     // dots between cards
 export const COL = 17;    // default card width in dots (306 px)
-export const MIN_W = 10;
-export const MIN_H = 3;
+// A card never shrinks past the point where it stops being usable: label + field stay readable (MIN_W, tables
+// MIN_W_TABLE), and the header plus about three rows stay visible (MIN_H; less only when the card has less in it).
+export const MIN_W = 14;
+export const MIN_W_TABLE = 20;
+export const MIN_H = 7;
+export const HEAD_H = 3;  // a folded card: header only
 
 export interface Cell { gx: number; gy: number; w: number; h: number }
 export interface Size { w: number; h: number }

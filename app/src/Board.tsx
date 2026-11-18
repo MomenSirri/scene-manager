@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { call } from "./api";
 import { ALWAYS, Field, Switch, WIDE } from "./fields";
-import { Cell, COL, dropPlan, GAP, GRID, MIN_H, MIN_W, plan, px, toDots, upDots } from "./grid";
+import { Cell, COL, dropPlan, GAP, GRID, HEAD_H, MIN_H, MIN_W, MIN_W_TABLE, plan, px, toDots, upDots } from "./grid";
 import { Icon } from "./icons";
 import type { MenuItem, MenuState } from "./Menu";
 import type { CardData, CardPref, Detail, Group, ModuleSchema, Schema } from "./types";
@@ -37,7 +37,7 @@ function Card({ item, card, mod, group, pref, onHeight, onDragStart, onResizeSta
 
   const menu = (e: React.MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const free = mod.props.filter((p) => !card.rows.find((x) => x.key === p.key)?.own && !ALWAYS.has(p.kind));
+    const free = mod.props.filter((p) => !card.rows.find((x) => x.key === p.key)?.own && !ALWAYS.has(p.kind) && p.installed !== false);
     const items: MenuItem[] = [
       { custom: <div className="color-dots">{[undefined, ...CARD_COLORS].map((c) =>
           <button key={c || "none"} title={c || "No colour"} className={"color-dot" + (pref.color === c ? " current" : "")}
@@ -79,7 +79,7 @@ function Card({ item, card, mod, group, pref, onHeight, onDragStart, onResizeSta
         <div className="card-body">
           {mod.props.map((p) => {
             const row = card.rows.find((r) => r.key === p.key);
-            if (!row) return null;
+            if (!row || (p.installed === false && !row.own && !row.inherited)) return null;   // other renderer, nothing stored
             const wide = WIDE.has(p.kind);
             const dot = row.differs ? "differs" : row.own ? "own" : row.inherited ? "inherited" : "none";
             const tip = row.differs ? "Differs from the scene right now" : row.own ? "Set on this " + item.type
@@ -120,7 +120,7 @@ interface BoardProps {
 
 type Gesture =
   | { kind: "drag"; key: string; dx: number; dy: number; x: number; y: number; started: boolean; sx: number; sy: number }
-  | { kind: "resize"; key: string; sx: number; sy: number; w0: number; h0: number };
+  | { kind: "resize"; key: string; sx: number; sy: number; w0: number; h0: number; atMin?: boolean };
 
 export function Board({ item, schema, category, prefs, setPref, setPrefs, order, setOrder, openMenu, flash }: BoardProps) {
   const mods = useMemo(() => Object.fromEntries(schema.modules.map((m) => [m.key, m])), [schema]);
@@ -136,14 +136,19 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
     return cards.map((c) => c.key).sort((a, b) => (pos.get(a) ?? 1e6) - (pos.get(b) ?? 1e6));
   }, [cards.map((c) => c.key).join(","), order]);
 
+  // smallest size a card may be dragged to (dots), and the height its rows need
+  const limits = useCallback((k: string) => {
+    const wide = mods[k]?.props.some((x) => x.kind === "table");
+    const natural = Math.max(HEAD_H, upDots(heights[k] ?? 60));
+    return { wide, natural, minW: wide ? MIN_W_TABLE : MIN_W, minH: Math.min(natural, MIN_H) };
+  }, [heights, mods]);
   const sizeOf = useCallback((k: string) => {
     const p = prefs[k] || {};
-    const wide = mods[k]?.props.some((x) => x.kind === "table");
-    const w = Math.max(MIN_W, p.w ?? (wide ? COL * 2 + GAP : COL));
+    const { wide, natural, minW, minH } = limits(k);
+    const w = Math.max(minW, p.w ?? (wide ? COL * 2 + GAP : COL));
     // as tall as the module's rows need, rounded up to the next dot; a resized card keeps its own height
-    const natural = Math.max(MIN_H, upDots(heights[k] ?? 60));
-    return { w, h: p.folded ? natural : Math.max(MIN_H, p.h ?? natural) };
-  }, [prefs, heights, mods]);
+    return { w, h: p.folded ? natural : Math.max(minH, p.h ?? natural) };
+  }, [prefs, limits]);
   const gxOf = useCallback((k: string) => prefs[k]?.gx, [prefs]);
   const cells = useMemo(() => plan(keys, sizeOf, gxOf), [keys, sizeOf, gxOf]);
 
@@ -165,10 +170,13 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
         const started = gesture.started || Math.abs(e.clientX - gesture.sx) + Math.abs(e.clientY - gesture.sy) > 4;
         setGesture({ ...gesture, x: p.x, y: p.y, started });
       } else {
-        const w = Math.max(MIN_W, toDots(gesture.w0 + e.clientX - gesture.sx));
-        const h = Math.max(MIN_H, toDots(gesture.h0 + e.clientY - gesture.sy));
+        const { minW, minH } = limits(gesture.key);
+        const w = Math.max(minW, toDots(gesture.w0 + e.clientX - gesture.sx));
+        const h = Math.max(minH, toDots(gesture.h0 + e.clientY - gesture.sy));
         const cur = prefs[gesture.key] || {};
+        const atMin = w === minW || h === minH;
         if (cur.w !== w || cur.h !== h) setPref(gesture.key, { w, h });
+        if (atMin !== !!gesture.atMin) setGesture({ ...gesture, atMin });
       }
     };
     const up = () => {
@@ -185,7 +193,7 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up); };
-  }, [gesture, target, prefs, keys, cells, order]);
+  }, [gesture, target, prefs, keys, cells, order, limits]);
 
   const startDrag = (key: string, e: React.PointerEvent) => {
     if (e.button !== 0) return;
@@ -209,7 +217,7 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
       <div ref={boardRef} className={"board" + (gesture ? " busy" : "")} style={{ width: right + GRID, height: bottom + GRID * 2 }}>
         {glow && <>
           <div className="hot-dots" style={{ left: glow.left - GRID / 2, top: glow.top - GRID / 2, width: glow.width + GRID, height: glow.height + GRID }} />
-          <div className={"glow" + (target ? " fill" : "")} style={glow} />
+          <div className={"glow" + (target ? " fill" : "") + (gesture?.kind === "resize" && gesture.atMin ? " limit" : "")} style={glow} />
         </>}
         {cards.length === 0 && <p className="muted empty-board">No {category ? groups[category]?.label.toLowerCase() + " " : ""}modules on this {item.type}. Use + in the left bar.</p>}
         {cards.map((card) => {

@@ -48,6 +48,28 @@ def renderer_classes():
     return out
 
 
+_installed = None
+
+
+def installed_kinds(refresh=False):
+    """Renderer kinds installed in this 3ds Max, in KINDS order (read once from RendererClass.classes).
+    If the list cannot be read, every known kind is returned so nothing is hidden by mistake."""
+    global _installed
+    if _installed is None or refresh:
+        try:
+            found = renderer_classes()
+        except Exception:
+            found = {}
+        _installed = [k for k in KINDS if k in found] or list(KINDS)
+    return list(_installed)
+
+
+def is_installed(*kinds):
+    """True when at least one of `kinds` is installed (no kinds = not renderer-specific = True)."""
+    have = installed_kinds()
+    return not kinds or any(k in have for k in kinds)
+
+
 _instances = {}   # kind -> renderer instance used earlier in this Max session
 
 
