@@ -116,11 +116,13 @@ QFrame#SMCard[dragging="true"] { border: 1px dashed %(ACC)s; }
 
 /* tree and grid */
 QTreeWidget#SMTree, QListWidget#SMGrid { background: %(SIDEBAR)s; border: none; outline: 0; }
-QTreeWidget#SMTree::branch { background: transparent; }
-QTreeWidget#SMTree::branch:selected { background: %(ACCS)s; }
+QTreeWidget#SMTree { show-decoration-selected: 0; }
+QTreeWidget#SMTree::branch, QTreeWidget#SMTree::branch:selected { background: transparent; }
 QTreeWidget#SMTree::item { height: 28px; border: none; }
-QTreeWidget#SMTree::item:hover, QListWidget#SMGrid::item:hover { background: #ffffff0a; }
-QTreeWidget#SMTree::item:selected, QListWidget#SMGrid::item:selected { background: %(ACCS)s; color: %(L1)s; }
+QTreeWidget#SMTree::item:hover, QTreeWidget#SMTree::item:selected { background: transparent; }  /* SetupTree.drawRow paints the row */
+QTreeWidget#SMTree QLineEdit { background: %(FIELD)s; border: 1px solid %(ACC)s; border-radius: 5px; padding: 0 4px; }
+QListWidget#SMGrid::item:hover { background: #ffffff0a; }
+QListWidget#SMGrid::item:selected { background: %(ACCS)s; color: %(L1)s; }
 QListWidget#SMGrid::item { border-radius: 8px; padding: 6px; }
 #SMPanel QHeaderView { background: %(SIDEBAR)s; }
 #SMPanel QHeaderView::section { background: %(SIDEBAR)s; color: %(L3)s; border: none;

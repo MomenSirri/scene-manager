@@ -19,6 +19,15 @@ from . import nodes, registry, storage, tokens
 _instance = None
 
 
+def _scene_redraw(on):
+    """disableSceneRedraw()/enableSceneRedraw() (MAXScript). Returns True when the call went through."""
+    try:
+        (rt.enableSceneRedraw if on else rt.disableSceneRedraw)()
+        return True
+    except Exception:
+        return False
+
+
 def get_manager():
     global _instance
     if _instance is None:
@@ -31,6 +40,7 @@ class SetupManager:
         self._listeners = []
         self.data = storage.empty()
         self.last_apply_ms = None
+        self._index = None  # {id: item}, dropped on every commit/reload
         self.reload()
 
     # ---- listeners -------------------------------------------------------
@@ -50,11 +60,13 @@ class SetupManager:
                 traceback.print_exc()
 
     def commit(self, notify=True):
+        self._index = None
         storage.save(self.data)
         if notify:
             self._notify()
 
     def reload(self):
+        self._index = None
         self.data = storage.load()
         self._notify()
 
@@ -98,7 +110,14 @@ class SetupManager:
             return None
         if isinstance(key, dict):
             key = key.get("id")
-        for i in self.items:
+        if not isinstance(key, str):
+            return None
+        if self._index is None:
+            self._index = {i["id"]: i for i in self.items}
+        hit = self._index.get(key)
+        if hit is not None:
+            return hit
+        for i in self.items:  # added since the last commit
             if i["id"] == key:
                 return i
         k = str(key).strip().lower()
@@ -184,9 +203,10 @@ class SetupManager:
 
     # ---- create / edit ---------------------------------------------------
     def _insert(self, item, parent, after=None):
-        if parent and self.require(parent)["type"] != "folder":
-            parent = self.require(parent).get("parent")
-        item["parent"] = parent
+        if parent:
+            p = self.require(parent)  # id, name or path
+            parent = p["id"] if p["type"] == "folder" else p.get("parent")
+        item["parent"] = parent or None
         item["name"] = self.unique_name(item["name"], parent, exclude=item)
         if after is not None and after in self.items:
             self.items.insert(self.items.index(after) + 1, item)
@@ -344,11 +364,22 @@ class SetupManager:
                 new.append(by_id.pop(iid))
         new.extend(by_id.values())
         self.data["items"] = new
+        self._index = None
         self.commit()
 
     # ---- apply -----------------------------------------------------------
-    def apply(self, key, only=None):
-        """Activate a setup (or just some modules). Returns a list of error strings."""
+    def apply(self, key, only=None, undo=None):
+        """Activate a setup (or just some modules). Returns a list of error strings.
+
+        undo: label of one undo step for the scene changes (the panel passes it; batch render does not).
+        Render settings and the environment are not undoable in 3ds Max; nodes, lights and layers are."""
+        if undo:
+            import pymxs
+            with pymxs.undo(True, undo):
+                return self._apply(key, only)
+        return self._apply(key, only)
+
+    def _apply(self, key, only=None):
         item = self.require(key)
         if item["type"] != "setup":
             raise ValueError("'%s' is a folder; activate a setup inside it" % item["name"])
@@ -360,6 +391,7 @@ class SetupManager:
         ctx = self.context(item)
         eff = self.effective(item)
         base_all = self.baseline
+        redraw_off = _scene_redraw(False)  # one viewport redraw at the end instead of one per module
         try:
             for m in registry.modules():
                 if only and m.key not in only:
@@ -388,6 +420,8 @@ class SetupManager:
                     traceback.print_exc()
                     errors.append("%s: %s" % (m.label, e))
         finally:
+            if redraw_off:
+                _scene_redraw(True)
             if was_open:
                 rt.renderSceneDialog.open()
         if not only:

@@ -24,3 +24,4 @@
 - Optional Module hooks (see `core/module_base.py`): `merge`, `differs`, `capture_baseline`, `available`, `reset`, `extend_context`, `touches_scene`. Prop kind `table` = {row: {column: value}} merged per row.
 - New card widgets: `ui/kinds_<group>.py` calling `prop_kinds.register_kind`; new bridge commands: `bridge/commands_<group>.py` + `claude_bridge/tools_<group>.py`. No edits to registry, cards, commands or mcp_server needed.
 - Flag any 3ds Max or renderer API call you are not sure exists so it can be checked in Max.
+- UI updates in place: never rebuild cards or the setups tree to show a change. `ModuleCard.sync()`, `SetupTree.sync()` and `Panel.refresh_cards()` reconcile; a full board rebuild happens only when layout tokens change. Give card widgets a parent before show/hide. Run `python -m tests.test_ui` (offscreen) after UI edits; details in `docs/ui_overhaul.md`.

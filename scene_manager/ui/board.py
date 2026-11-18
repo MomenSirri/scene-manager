@@ -71,7 +71,30 @@ class CardBoard(QtWidgets.QWidget):
     def add_note(self, widget):
         widget.setParent(self)
         self.extra.append(widget)
+        widget.show()
         self.relayout()
+
+    def set_cards(self, cards, note=None):
+        """Replace the card list in place: cards that stay keep their widgets, the others are dropped."""
+        keep = set(map(id, cards))
+        for c in self.cards:
+            if id(c) not in keep:
+                c.removeEventFilter(self)
+                c.hide()
+                c.deleteLater()
+        for c in cards:
+            if c.parentWidget() is not self:
+                c.setParent(self)
+                c.installEventFilter(self)
+        self.cards = list(cards)
+        for w in self.extra:
+            w.hide()
+            w.deleteLater()
+        self.extra = []
+        if note is not None:
+            self.add_note(note)
+        else:
+            self.relayout()
 
     # ---- grid ----
     def step(self):
@@ -105,7 +128,8 @@ class CardBoard(QtWidgets.QWidget):
             c.show()
             for i in range(col, col + span):
                 heights[i] = y + h + self.gap
-        self.setMinimumSize(self.ncols() * self.step(), max(heights))
+        # The spare drop column on the right is not part of the minimum width: it must not cause a scroll bar.
+        self.setMinimumSize(max(1, (self.ncols() - 1) * self.step() - self.gap), max(heights))
 
     def eventFilter(self, obj, e):
         if e.type() == QtCore.QEvent.LayoutRequest and obj in self.cards:
@@ -178,4 +202,7 @@ class CardBoard(QtWidgets.QWidget):
             c.col = col if c is card else c.slot_col
             card_prefs.update(c.m.key, col=c.col)
         save_order(keys)
-        QtCore.QTimer.singleShot(0, self.on_reorder)  # rebuild after the drag has finished
+        self.cards.sort(key=lambda c: keys.index(c.m.key))  # move in place: no card is rebuilt
+        self.relayout()
+        if self.on_reorder:
+            QtCore.QTimer.singleShot(0, self.on_reorder)

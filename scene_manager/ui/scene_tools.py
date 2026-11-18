@@ -24,7 +24,7 @@ def _guard(panel, fn):
     try:
         r = fn()
         if isinstance(r, list) and r and all(isinstance(x, str) for x in r) and r is not None:
-            panel.status.setText("; ".join(r))
+            panel.flash("; ".join(r))
     except Exception as e:
         QtWidgets.QMessageBox.warning(panel, "Scene Manager", str(e))
 
@@ -36,7 +36,7 @@ def _capture(panel):
         return
     try:
         keys = mgr.capture_baseline()
-        panel.status.setText("Baseline captured: %s" % ", ".join(keys))
+        panel.flash("Baseline captured: %s" % ", ".join(keys))
     except Exception as e:
         QtWidgets.QMessageBox.warning(panel, "Scene Manager", str(e))
 
@@ -95,5 +95,5 @@ class RepairDialog(QtWidgets.QDialog):
         except Exception as e:
             QtWidgets.QMessageBox.warning(self, "Scene Manager", str(e))
             return
-        self.panel.status.setText("Repaired %d reference(s)." % done)
+        self.panel.flash("Repaired %d reference(s)." % done)
         self.accept()

@@ -15,6 +15,43 @@ from .widgets import Switch
 
 
 # ---- property widgets -----------------------------------------------------
+def _camera_names():
+    return [str(n.name) for n in nodes.list_cameras()]
+
+
+def _sun_names():
+    return [str(n.name) for n in (sun_mod.list_suns() or nodes.list_lights())]
+
+
+class _NodeCombo(QtWidgets.QComboBox):
+    """Scene node picker. The list is read from the scene again each time it opens, so cameras and
+    lights created after the card was built show up without a rebuild."""
+
+    def __init__(self, names_fn):
+        super().__init__()
+        self._names_fn = names_fn
+
+    def fill(self, current=None):
+        try:
+            names = list(self._names_fn())
+        except Exception:
+            names = []
+        if current and current not in names:
+            names.insert(0, current)
+        items = ["(none)"] + names
+        self.blockSignals(True)
+        if [self.itemText(i) for i in range(self.count())] != items:
+            self.clear()
+            self.addItems(items)
+        self.setCurrentText(current or "(none)")
+        self.blockSignals(False)
+
+    def showPopup(self):
+        cur = self.currentText()
+        self.fill(None if cur == "(none)" else cur)
+        super().showPopup()
+
+
 class PropWidget(QtWidgets.QWidget):
     changed = QtCore.Signal()
 
@@ -28,14 +65,9 @@ class PropWidget(QtWidgets.QWidget):
         if k in prop_kinds.kinds():  # extra kinds registered in ui/kinds_*.py (M2+)
             w = prop_kinds.create(prop, value, self.changed.emit, ctx or {})
         elif k in ("camera", "sunlight"):
-            w = QtWidgets.QComboBox()
-            pool = nodes.list_cameras() if k == "camera" else (sun_mod.list_suns() or nodes.list_lights())
-            names = [str(n.name) for n in pool]
+            w = _NodeCombo(_camera_names if k == "camera" else _sun_names)
             cur = (value or {}).get("name") if isinstance(value, dict) else None
-            if cur and cur not in names:
-                names.insert(0, cur)
-            w.addItems(["(none)"] + names)
-            w.setCurrentText(cur or "(none)")
+            w.fill(cur)
             w.activated.connect(lambda *_: self.changed.emit())
         elif k == "int":
             w = QtWidgets.QSpinBox()
@@ -84,6 +116,37 @@ class PropWidget(QtWidgets.QWidget):
         if fn:
             self.w.setText(fn)
             self.changed.emit()
+
+    def set(self, value):
+        """Show `value` without emitting `changed`. False = this kind cannot be updated in place
+        (kinds from ui/kinds_*.py without a set_value method): the card then swaps the widget."""
+        k, w = self.prop.kind, self.w
+        if k in prop_kinds.kinds():
+            setter = getattr(w, "set_value", None)
+            if setter is None:
+                return False
+            setter(value)
+            return True
+        w.blockSignals(True)
+        try:
+            if k in ("camera", "sunlight"):
+                w.fill((value or {}).get("name") if isinstance(value, dict) else None)
+            elif k == "int":
+                w.setValue(int(value) if value is not None else 0)
+            elif k == "float":
+                w.setValue(float(value) if value is not None else 0.0)
+            elif k == "bool":
+                w.setChecked(bool(value))
+            elif k == "enum":
+                if value is not None:
+                    w.setCurrentText(str(value))
+            else:
+                text = "" if value is None else str(value)
+                if w.text() != text:
+                    w.setText(text)
+        finally:
+            w.blockSignals(False)
+        return True
 
     def get(self):
         k, w = self.prop.kind, self.w
@@ -218,20 +281,8 @@ class ModuleCard(QtWidgets.QFrame):
         self._press = None
         self.setObjectName("SMCard")
         self.mgr, self.item, self.m = mgr, item, module
-        self.state = mgr.module_state(item, module.key)
-        own = item["modules"].get(module.key) or {}
-        self.own_values = own.get("values") or {}
-        try:
-            self.scene = module.capture()
-        except Exception:
-            self.scene = {}
-        # differs from the scene: reuse the capture above instead of reading the scene a second time
-        self.differs = set()
-        if item["type"] == "setup" and self.state["enabled"] and getattr(module, "touches_scene", True) and self.scene:
-            try:
-                self.differs = module.differs(self.state["values"], self.scene)
-            except Exception:
-                self.differs = set()
+        self._editing = None   # prop key the user just edited (its widget already shows the value)
+        self._compute()
         self.prefs = card_prefs.get(module.key)
         self.fixed_w = self.prefs.get("w")
         self.fixed_h = self.prefs.get("h")
@@ -249,8 +300,7 @@ class ModuleCard(QtWidgets.QFrame):
         lay.setSpacing(0)
 
         group = groups.group_of(module)
-        color = self.prefs.get("color")
-        tint = color or groups.TINT.get(group, theme.ACCENT)
+        self.group = group
         head = QtWidgets.QWidget()
         hl = QtWidgets.QHBoxLayout(head)
         hl.setContentsMargins(pad, L["header_pad"], pad, max(2, L["header_pad"] - 2))
@@ -261,26 +311,20 @@ class ModuleCard(QtWidgets.QFrame):
         head.installEventFilter(self)
         badge = QtWidgets.QLabel()
         isz = L["icon_size"]
-        badge.setPixmap(icons.tinted(groups.ICON.get(group, "scene"), tint).pixmap(isz, isz))
+        self.badge, self._isz, self._radius = badge, isz, L["card_radius"]
         badge.setToolTip(groups.LABEL.get(group, ""))
-        if color:  # coloured card: tinted header band
-            c = QtGui.QColor(color)
-            head.setObjectName("SMCardHead")
-            head.setAttribute(QtCore.Qt.WA_StyledBackground)
-            r = L["card_radius"]
-            head.setStyleSheet("#SMCardHead { background: rgba(%d, %d, %d, 46); border-top-left-radius: %dpx;"
-                               " border-top-right-radius: %dpx; }" % (c.red(), c.green(), c.blue(), r, r))
+        head.setObjectName("SMCardHead")
+        head.setAttribute(QtCore.Qt.WA_StyledBackground)
         hl.addWidget(badge)
         title = QtWidgets.QLabel(self.prefs.get("title") or module.label)
         self.title_lbl = title
         title.setObjectName("SMCardTitle")
         title.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)  # head handles click (collapse) and drag
         hl.addWidget(title)
-        origin = self._origin_text()
-        if origin:
-            o = QtWidgets.QLabel(origin)
-            o.setObjectName("SMCardOrigin")
-            hl.addWidget(o)
+        self.origin_lbl = QtWidgets.QLabel(self._origin_text())
+        self.origin_lbl.setObjectName("SMCardOrigin")
+        hl.addWidget(self.origin_lbl)
+        self.origin_lbl.setVisible(bool(self.origin_lbl.text()))
         hl.addStretch(1)
         bsz = max(28, isz + 10)  # header buttons scale with the icon size token
         self.collapse = QtWidgets.QToolButton()
@@ -302,8 +346,8 @@ class ModuleCard(QtWidgets.QFrame):
         menu_btn.setMenu(self._menu())
         hl.addWidget(menu_btn)
         hl.addWidget(self.collapse)
-        self.enabled_box = Switch(on_color=tint)
-        self.enabled_box.setToolTip("Module on for this %s. Off = leave this part of the scene alone." % item["type"])
+        self.enabled_box = Switch()
+        self.enabled_box.setToolTip("Module on. Off = leave this part of the scene alone.")
         self.enabled_box.setChecked(self.state["enabled"])
         self.enabled_box.toggled.connect(self._on_enabled)
         hl.addWidget(self.enabled_box)
@@ -329,43 +373,23 @@ class ModuleCard(QtWidgets.QFrame):
         label_align = (QtCore.Qt.AlignRight if L["label_align"] == "right" else QtCore.Qt.AlignLeft) | \
             QtCore.Qt.AlignVCenter
         self.rows = {}
+        self._row = {}  # prop key -> {"dot", "sig", "state"}
+        self._field_h = L["field_height"]
         r = -1
         for prop in module.props:
             r += 1
-            own_set = prop.key in self.own_values
-            inherited = prop.key in self.state["values"] and not own_set
-            if own_set:
-                value = self.own_values[prop.key]
-            elif inherited:
-                value = self.state["values"][prop.key]
-            else:
-                value = self.scene.get(prop.key)
+            value, own_set, inherited = self._row_value(prop)
             dot = QtWidgets.QLabel()
-            if prop.key in self.differs:
-                dot.setPixmap(_dot(theme.DIFFERS))
-                dot.setToolTip("Differs from the scene right now")
-            elif own_set:
-                dot.setPixmap(_dot(theme.OVERRIDE))
-                dot.setToolTip("Set on this %s" % item["type"])
-            else:
-                dot.setPixmap(_dot(theme.INHERITED, filled=inherited))
-                dot.setToolTip(self._source_tip(prop.key) if inherited else "Not stored: the scene value is kept")
             label = QtWidgets.QLabel(prop.label)
             label.setObjectName("SMPropLabel")
             label.setAlignment(label_align)
             label.setWordWrap(not above)
             if not above:
                 label.setFixedWidth(L["label_width"])
-            ctx = {"own": self.own_values.get(prop.key), "effective": self.state["values"].get(prop.key),
-                   "scene": self.scene.get(prop.key), "item": item, "mgr": mgr}
-            w = PropWidget(prop, value, ctx=ctx)
-            w.setEnabled(own_set or prop_kinds.always_editable(prop.kind))
-            w.changed.connect(lambda p=prop.key: self._on_value(p))
+            w = self._make_field(prop, value)
             over = QtWidgets.QCheckBox()
-            over.setChecked(own_set)
             over.setToolTip("Store this value here (unticked = inherit from the folder, or leave the scene alone)")
             over.toggled.connect(lambda on, p=prop.key: self._on_override(p, on))
-            w.setMinimumHeight(L["field_height"]) if not prop_kinds.is_wide(prop.kind) else None
             grid.addWidget(dot, r, 0)
             if not dots:
                 dot.hide()  # only after it has a parent: hiding/showing a parentless widget opens a window
@@ -384,6 +408,8 @@ class ModuleCard(QtWidgets.QFrame):
                 grid.addWidget(w, r, 2)
                 grid.addWidget(over, r, 3)
             self.rows[prop.key] = (w, over)
+            self._row[prop.key] = {"dot": dot, "sig": self._sig(prop, value), "state": None}
+            self._style_row(prop, own_set, inherited)
         self.body_scroll = _BodyScroll(self.body)
         lay.addWidget(self.body_scroll, 1)
         self.body.setEnabled(self.state["enabled"])
@@ -396,6 +422,7 @@ class ModuleCard(QtWidgets.QFrame):
             a.setShortcutContext(QtCore.Qt.WidgetWithChildrenShortcut)
             a.triggered.connect(fn)
             self.addAction(a)
+        self._apply_look()
         self._apply_fixed_height()
         if collapsed:
             self.collapse.blockSignals(True)
@@ -451,6 +478,123 @@ class ModuleCard(QtWidgets.QFrame):
             self.style().polish(self)
         except RuntimeError:  # the board was rebuilt during the drop
             pass
+
+    # ---- state: read once, shown by the rows; sync() updates the card in place ----
+    def _compute(self):
+        item, module = self.item, self.m
+        self.state = self.mgr.module_state(item, module.key)
+        own = item["modules"].get(module.key) or {}
+        self.own_values = own.get("values") or {}
+        try:
+            self.scene = module.capture()
+        except Exception:
+            self.scene = {}
+        # differs from the scene: reuse the capture above instead of reading the scene a second time
+        self.differs = set()
+        if item["type"] == "setup" and self.state["enabled"] and getattr(module, "touches_scene", True) and self.scene:
+            try:
+                self.differs = module.differs(self.state["values"], self.scene)
+            except Exception:
+                self.differs = set()
+
+    def _row_value(self, prop):
+        """(value shown, stored on this item, inherited from a folder)"""
+        own_set = prop.key in self.own_values
+        inherited = prop.key in self.state["values"] and not own_set
+        if own_set:
+            value = self.own_values[prop.key]
+        elif inherited:
+            value = self.state["values"][prop.key]
+        else:
+            value = self.scene.get(prop.key)
+        return value, own_set, inherited
+
+    def _sig(self, prop, value):
+        """Everything a field shows; when it is unchanged the widget is left alone."""
+        return json.dumps([value, self.own_values.get(prop.key), self.state["values"].get(prop.key),
+                           self.scene.get(prop.key)], sort_keys=True, default=str)
+
+    def _make_field(self, prop, value):
+        ctx = {"own": self.own_values.get(prop.key), "effective": self.state["values"].get(prop.key),
+               "scene": self.scene.get(prop.key), "item": self.item, "mgr": self.mgr}
+        w = PropWidget(prop, value, parent=self.body, ctx=ctx)
+        w.changed.connect(lambda p=prop.key: self._on_value(p))
+        if not prop_kinds.is_wide(prop.kind):
+            w.setMinimumHeight(self._field_h)
+        return w
+
+    def _style_row(self, prop, own_set, inherited):
+        """Dot, override tick and enabled state of one row (skipped when nothing changed)."""
+        differs = prop.key in self.differs
+        src = self.state["source"].get(prop.key) if inherited else None
+        state = (differs, own_set, inherited, src, self.item["type"])
+        row = self._row[prop.key]
+        w, over = self.rows[prop.key]
+        if row["state"] == state:
+            return
+        row["state"] = state
+        dot = row["dot"]
+        if differs:
+            dot.setPixmap(_dot(theme.DIFFERS))
+            dot.setToolTip("Differs from the scene right now")
+        elif own_set:
+            dot.setPixmap(_dot(theme.OVERRIDE))
+            dot.setToolTip("Set on this %s" % self.item["type"])
+        else:
+            dot.setPixmap(_dot(theme.INHERITED, filled=inherited))
+            dot.setToolTip(self._source_tip(prop.key) if inherited else "Not stored: the scene value is kept")
+        if over.isChecked() != own_set:
+            over.blockSignals(True)
+            over.setChecked(own_set)
+            over.blockSignals(False)
+        w.setEnabled(own_set or prop_kinds.always_editable(prop.kind))
+
+    def sync(self, item=None):
+        """Bring the card up to date with the manager and the scene without rebuilding it.
+        Also used to show another setup or folder in the same card."""
+        if item is not None:
+            self.item = item
+        editing, self._editing = self._editing, None
+        self._compute()
+        grid = self.body.layout()
+        for prop in self.m.props:
+            value, own_set, inherited = self._row_value(prop)
+            row = self._row[prop.key]
+            sig = self._sig(prop, value)
+            if sig != row["sig"]:
+                row["sig"] = sig
+                w, over = self.rows[prop.key]
+                if prop.key != editing and not w.set(value):
+                    new = self._make_field(prop, value)
+                    grid.replaceWidget(w, new)
+                    w.hide()
+                    w.deleteLater()
+                    self.rows[prop.key] = (new, over)
+                    row["state"] = None
+            self._style_row(prop, own_set, inherited)
+        origin = self._origin_text()
+        if self.origin_lbl.text() != origin:
+            self.origin_lbl.setText(origin)
+            self.origin_lbl.setVisible(bool(origin))
+        if self.enabled_box.isChecked() != self.state["enabled"]:
+            self.enabled_box.blockSignals(True)
+            self.enabled_box.setChecked(self.state["enabled"])
+            self.enabled_box.blockSignals(False)
+        self.body.setEnabled(self.state["enabled"])
+
+    def _apply_look(self):
+        """Header icon, band and switch colour from the card's colour (card menu)."""
+        color = self.prefs.get("color")
+        tint = color or groups.TINT.get(self.group, theme.ACCENT)
+        self.badge.setPixmap(icons.tinted(groups.ICON.get(self.group, "scene"), tint).pixmap(self._isz, self._isz))
+        if color:  # coloured card: tinted header band
+            c = QtGui.QColor(color)
+            r = self._radius
+            self.head.setStyleSheet("#SMCardHead { background: rgba(%d, %d, %d, 46); border-top-left-radius: %dpx;"
+                                    " border-top-right-radius: %dpx; }" % (c.red(), c.green(), c.blue(), r, r))
+        else:
+            self.head.setStyleSheet("")
+        self.enabled_box.set_on_color(tint)
 
     # ---- helpers ----
     def _origin_text(self):
@@ -561,7 +705,8 @@ class ModuleCard(QtWidgets.QFrame):
 
     def _set_color(self, color):
         card_prefs.update(self.m.key, color=color)
-        self.mgr._notify()  # rebuild the board with the new colour
+        self.prefs = card_prefs.get(self.m.key)
+        self._apply_look()
 
     def _rename_to(self, text):
         text = text.strip()
@@ -614,7 +759,7 @@ class ModuleCard(QtWidgets.QFrame):
 
     def _live_apply(self):
         if self._is_active():
-            self.mgr.apply(self.item["id"], only=[self.m.key])
+            self.mgr.apply(self.item["id"], only=[self.m.key], undo="Scene Manager: %s" % self.m.label)
 
     # ---- actions ----
     def _on_enabled(self, on):
@@ -629,6 +774,7 @@ class ModuleCard(QtWidgets.QFrame):
         self._live_apply()
 
     def _on_value(self, prop_key):
+        self._editing = prop_key
         self.mgr.set_values(self.item["id"], self.m.key, {prop_key: self.rows[prop_key][0].get()})
         self._live_apply()
 
@@ -636,7 +782,7 @@ class ModuleCard(QtWidgets.QFrame):
         self.mgr.capture(self.item["id"], keys=[self.m.key])
 
     def _apply_only(self):
-        self.mgr.apply(self.item["id"], only=[self.m.key])
+        self.mgr.apply(self.item["id"], only=[self.m.key], undo="Scene Manager: %s" % self.m.label)
 
     def _run_action(self, fn):
         values = dict(self.scene)

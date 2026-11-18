@@ -19,6 +19,10 @@ class Switch(QtWidgets.QAbstractButton):
         self._anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
         self.toggled.connect(self._animate)
 
+    def set_on_color(self, color):
+        self._on_color = QtGui.QColor(color)
+        self.update()
+
     def _get_knob(self):
         return self._pos
 

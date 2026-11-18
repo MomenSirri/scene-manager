@@ -6,6 +6,9 @@ if old_ui is not None and getattr(old_ui, "_dock", None) is not None:
     old_ui._dock.close()
     old_ui._dock.deleteLater()
     old_ui._dock = None
+old_start = sys.modules.get("scene_manager.startup")
+if old_start is not None and hasattr(old_start, "shutdown"):
+    old_start.shutdown()
 
 for name in [m for m in sys.modules if m == "scene_manager" or m.startswith("scene_manager.")]:
     if name.endswith("bridge.max_server"):

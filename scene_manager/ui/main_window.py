@@ -1,4 +1,4 @@
-"""Scene Manager panel: a dockable window (float it, or dock it to any side of 3ds Max).
+"""Scene Manager panel: its own frameless window owned by the 3ds Max main window.
 
 Layout: icon rail | setups sidebar (folders tree or thumbnail grid, search, tag chips) | setup header
 and module cards. When the panel is narrow the sidebar moves above the cards.
@@ -78,6 +78,48 @@ def _backdrop_host(widget):
     return widget.window() if widget.window() is not None else widget
 
 
+class _EdgeGrip(QtWidgets.QWidget):
+    """Invisible strip on one edge or corner of the window: shows the resize cursor and starts a system resize.
+    Eight of these replace an application-wide event filter, so nothing of ours runs for 3ds Max's own events."""
+
+    @staticmethod
+    def _cursor(edges):
+        L, R, T, B = QtCore.Qt.LeftEdge, QtCore.Qt.RightEdge, QtCore.Qt.TopEdge, QtCore.Qt.BottomEdge
+        if edges in (L | T, R | B):
+            return QtCore.Qt.SizeFDiagCursor
+        if edges in (R | T, L | B):
+            return QtCore.Qt.SizeBDiagCursor
+        return QtCore.Qt.SizeHorCursor if edges in (L, R) else QtCore.Qt.SizeVerCursor
+
+    def __init__(self, win, edges):
+        super().__init__(win)
+        self.edges = edges
+        self.edges = QtCore.Qt.Edges(edges)
+        self.corner = edges not in (QtCore.Qt.LeftEdge, QtCore.Qt.RightEdge, QtCore.Qt.TopEdge, QtCore.Qt.BottomEdge)
+        self.setCursor(self._cursor(edges))
+
+    def mousePressEvent(self, e):
+        if e.button() == QtCore.Qt.LeftButton:
+            h = self.window().windowHandle()
+            if h is not None:
+                h.startSystemResize(self.edges)
+        e.accept()
+
+
+class _WindowLogger(QtCore.QObject):
+    """Diagnostics, off by default (config "debug_windows": true): logs every window that opens."""
+
+    def __init__(self, win):
+        super().__init__(win)
+        self.win = win
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QtCore.QEvent.Show and isinstance(obj, QtWidgets.QWidget) and obj.isWindow() \
+                and obj is not self.win:
+            _log_window(obj)
+        return False
+
+
 class AppWindow(QtWidgets.QWidget):
     """Frameless top-level window with our own title bar. Owned by the 3ds Max main window, so it stays above
     Max (not above other programs) and minimises with it. Moves, snaps and resizes through the system."""
@@ -88,89 +130,59 @@ class AppWindow(QtWidgets.QWidget):
         self.setWindowTitle("Scene Manager")
         self.setWindowIcon(icons.tinted("setups", "#64d2ff"))
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
-        self.setMouseTracking(True)
         self.setMinimumSize(560, 380)
         lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(1, 1, 1, 1)  # 1 px outline; the edge band below handles resizing
+        lay.setContentsMargins(1, 1, 1, 1)  # 1 px outline
         lay.setSpacing(0)
         self.title_bar = TitleBar(self)
         self.title_bar.setStyleSheet(theme.rgba(WINDOW_QSS))
         lay.addWidget(self.title_bar)
-        self.panel = Panel()
+        self.panel = Panel(self)
         lay.addWidget(self.panel, 1)
-        g = config.load().get("window_geometry")
-        if g and len(g) == 4:
-            self.setGeometry(QtCore.QRect(*g))
-        else:
-            self.resize(1180, 720)
-        QtWidgets.QApplication.instance().installEventFilter(self)  # edge-resize over child widgets too
+        L, R, T, B = QtCore.Qt.LeftEdge, QtCore.Qt.RightEdge, QtCore.Qt.TopEdge, QtCore.Qt.BottomEdge
+        self._grips = [_EdgeGrip(self, e) for e in (L, R, T, B, L | T, R | T, L | B, R | B)]
+        self._gt = QtCore.QTimer(self, singleShot=True, interval=400, timeout=self._save_geometry)
+        cfg = config.load()
+        self._restore_geometry(cfg.get("window_geometry"))
+        if cfg.get("debug_windows"):
+            self._logger = _WindowLogger(self)
+            QtWidgets.QApplication.instance().installEventFilter(self._logger)
+        _keep_typing_out_of_max(self)
 
     def widget(self):  # same call as the old dock, used by tests and scripts
         return self.panel
 
+    def _restore_geometry(self, g):
+        """Saved place and size, unless the monitor it was on is gone: then centre on the current screen."""
+        rect = QtCore.QRect(*g) if g and len(g) == 4 else None
+        screens = QtGui.QGuiApplication.screens()
+        if rect is not None and any(sc.availableGeometry().intersects(rect.adjusted(40, 10, -40, -40)) for sc in screens):
+            self.setGeometry(rect)
+            return
+        self.resize(1180, 720)
+        owner = self.parentWidget()
+        sc = (owner.screen() if owner is not None else None) or QtGui.QGuiApplication.primaryScreen()
+        if sc is not None:
+            a = sc.availableGeometry()
+            self.resize(min(1180, a.width() - 80), min(720, a.height() - 80))
+            self.move(a.center() - self.rect().center())
+
     # ---- resize from the edges (system resize keeps it smooth and snaps on Windows) ----
-    def _edges(self, gpos):
-        if self.isMaximized():
-            return QtCore.Qt.Edges()
-        p = self.mapFromGlobal(gpos)
-        r = self.rect()
-        e = QtCore.Qt.Edges()
-        if p.x() <= EDGE:
-            e |= QtCore.Qt.LeftEdge
-        if p.x() >= r.width() - EDGE:
-            e |= QtCore.Qt.RightEdge
-        if p.y() <= EDGE:
-            e |= QtCore.Qt.TopEdge
-        if p.y() >= r.height() - EDGE:
-            e |= QtCore.Qt.BottomEdge
-        return e
-
-    _CURSORS = {}
-
-    def _cursor(self, e):
-        L, R, T, B = QtCore.Qt.LeftEdge, QtCore.Qt.RightEdge, QtCore.Qt.TopEdge, QtCore.Qt.BottomEdge
-        if e in (L | T, R | B):
-            return QtCore.Qt.SizeFDiagCursor
-        if e in (R | T, L | B):
-            return QtCore.Qt.SizeBDiagCursor
-        if e & (L | R):
-            return QtCore.Qt.SizeHorCursor
-        if e & (T | B):
-            return QtCore.Qt.SizeVerCursor
-        return None
-
-    def eventFilter(self, obj, ev):
-        t = ev.type()
-        if t == QtCore.QEvent.Show and isinstance(obj, QtWidgets.QWidget) and obj.isWindow() and obj is not self:
-            _log_window(obj)
-        if t in (QtCore.QEvent.MouseMove, QtCore.QEvent.MouseButtonPress) and isinstance(obj, QtWidgets.QWidget) \
-                and obj.window() is self:
-            gpos = ev.globalPosition().toPoint()
-            edges = self._edges(gpos)
-            cur = self._cursor(edges)
-            if t == QtCore.QEvent.MouseMove and ev.buttons() == QtCore.Qt.NoButton:
-                if cur is not None:
-                    if not self._override:
-                        QtWidgets.QApplication.setOverrideCursor(cur)
-                        self._override = True
-                    else:
-                        QtWidgets.QApplication.changeOverrideCursor(cur)
-                elif self._override:
-                    QtWidgets.QApplication.restoreOverrideCursor()
-                    self._override = False
-            elif t == QtCore.QEvent.MouseButtonPress and ev.button() == QtCore.Qt.LeftButton and cur is not None:
-                h = self.windowHandle()
-                if h is not None and h.startSystemResize(edges):
-                    return True
-        return False
-
-    _override = False
-
-    def leaveEvent(self, e):
-        if self._override:
-            QtWidgets.QApplication.restoreOverrideCursor()
-            self._override = False
-        super().leaveEvent(e)
+    def _place_grips(self):
+        w, h, e = self.width(), self.height(), EDGE
+        c = e * 2  # corners are a bit larger, easier to hit
+        geo = (
+            (0, c, e, h - 2 * c), (w - e, c, e, h - 2 * c), (c, 0, w - 2 * c, e), (c, h - e, w - 2 * c, e),
+            (0, 0, c, c), (w - c, 0, c, c), (0, h - c, c, c), (w - c, h - c, c, c))
+        show = not (self.isMaximized() or self.isFullScreen())
+        for g, r in zip(self._grips, geo):
+            if g.corner:
+                # an L-shaped corner: only the outer band takes the mouse, the inside stays clickable
+                g.setMask(QtGui.QRegion(0, 0, c, c) - QtGui.QRegion(
+                    e if g.edges & QtCore.Qt.LeftEdge else 0, e if g.edges & QtCore.Qt.TopEdge else 0, c - e, c - e))
+            g.setGeometry(*r)
+            g.setVisible(show)
+            g.raise_()
 
     def paintEvent(self, e):
         p = QtGui.QPainter(self)
@@ -186,26 +198,41 @@ class AppWindow(QtWidgets.QWidget):
     def _save_geometry(self):
         if not self.isMaximized() and not self.isMinimized():
             g = self.geometry()
-            cfg = config.load()
-            cfg["window_geometry"] = [g.x(), g.y(), g.width(), g.height()]
-            config.save(cfg)
+            geo = [g.x(), g.y(), g.width(), g.height()]
+            if config.load().get("window_geometry") != geo:
+                config.update(window_geometry=geo)
 
     def moveEvent(self, e):
         super().moveEvent(e)
-        self._geo_timer().start()
+        self._gt.start()
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        self._geo_timer().start()
+        self._place_grips()
+        self._gt.start()
 
-    def _geo_timer(self):
-        if not hasattr(self, "_gt"):
-            self._gt = QtCore.QTimer(self, singleShot=True, interval=400, timeout=self._save_geometry)
-        return self._gt
+    def changeEvent(self, e):
+        super().changeEvent(e)
+        if e.type() == QtCore.QEvent.WindowStateChange and hasattr(self, "_grips"):
+            self._place_grips()
+            self.title_bar.sync_max_button()
+        elif e.type() == QtCore.QEvent.ActivationChange and self.isActiveWindow() and hasattr(self, "panel"):
+            self.panel.on_window_activated()
 
     def closeEvent(self, e):
+        self._gt.stop()
         self._save_geometry()
+        self.panel.save_view_state()
         super().closeEvent(e)
+
+
+def _keep_typing_out_of_max(window):
+    """While one of our text fields has the focus, 3ds Max must not treat typed keys as its shortcuts."""
+    try:
+        import qtmax
+        qtmax.DisableMaxAcceleratorsOnFocus(window, True)  # UNVERIFIED name: check `dir(qtmax)` in Max 2025/2026
+    except Exception:
+        pass
 
 
 class TitleBar(QtWidgets.QWidget):
@@ -239,21 +266,37 @@ class TitleBar(QtWidgets.QWidget):
             b.setIconSize(QtCore.QSize(16, 16))
             b.setFixedSize(30, 26)
             b.setToolTip(tip)
+            b.setFocusPolicy(QtCore.Qt.NoFocus)
             b.clicked.connect(fn)
             lay.addWidget(b)
+            if name == "maximize":
+                self.max_btn = b
+        self._press = None
 
     def _toggle_max(self):
         self.win.showNormal() if self.win.isMaximized() else self.win.showMaximized()
 
+    def sync_max_button(self):
+        self.max_btn.setToolTip("Restore" if self.win.isMaximized() else "Maximise")
+
+    # The move starts on the first drag step, not on the press, so a double-click still reaches us.
     def mousePressEvent(self, e):
-        if e.button() == QtCore.Qt.LeftButton and not self.win._edges(e.globalPosition().toPoint()):
+        self._press = e.globalPosition().toPoint() if e.button() == QtCore.Qt.LeftButton else None
+
+    def mouseMoveEvent(self, e):
+        if self._press is not None and (e.globalPosition().toPoint() - self._press).manhattanLength() >= 4:
+            self._press = None
             h = self.win.windowHandle()
             if h is not None:
                 h.startSystemMove()
-        super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        self._press = None
 
     def mouseDoubleClickEvent(self, e):
-        self._toggle_max()
+        self._press = None
+        if e.button() == QtCore.Qt.LeftButton:
+            self._toggle_max()
 
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
@@ -317,8 +360,14 @@ class Panel(QtWidgets.QWidget):
         self.collapsed = set(cfg.get("collapsed_cards") or [])
         self.tag_filter = set()
         self._building = False
+        self._board = None        # the CardBoard on screen; cards are updated in place, not rebuilt
+        self._board_tok = None    # layout tokens the board was built with
+        self._chips_sig = None
+        self._queue_sig = None
+        self._thumbs = {}         # setup id -> (thumbnail string, icon): decode each PNG once
+        self._flash_text = ""
+        self._flash_timer = QtCore.QTimer(self, singleShot=True, interval=5000, timeout=self.refresh_status)
         self._refresh_timer = QtCore.QTimer(self, singleShot=True, interval=0, timeout=self.refresh)
-        # rebuild cards once the user stops resizing, not on every resize step
         self._resize_timer = QtCore.QTimer(self, singleShot=True, interval=120, timeout=self._after_resize)
 
         root = QtWidgets.QHBoxLayout(self)
@@ -340,7 +389,47 @@ class Panel(QtWidgets.QWidget):
         self.mgr.add_listener(self.schedule_refresh)
         from ..bridge import commands
         commands._log_listeners.append(self._refresh_claude_log)
+        self.destroyed.connect(lambda *_, m=self.mgr, fn=self.schedule_refresh: m.remove_listener(fn))
+        self._install_shortcuts()
         self.refresh()
+
+    def _install_shortcuts(self):
+        """Keys work while the mouse focus is in the setups list; Ctrl+F works anywhere in the window."""
+        def key(seq, fn, widget, ctx=QtCore.Qt.WidgetWithChildrenShortcut):
+            a = QtGui.QAction(widget)
+            a.setShortcut(QtGui.QKeySequence(seq))
+            a.setShortcutContext(ctx)
+            a.triggered.connect(fn)
+            widget.addAction(a)
+
+        for w in (self.tree, self.grid):
+            key("Return", lambda: self.on_activate(self.selected), w)
+            key("Enter", lambda: self.on_activate(self.selected), w)
+            key("Delete", lambda: self.on_delete(), w)
+            key("Ctrl+D", lambda: self.on_duplicate(), w)
+            key("Ctrl+N", lambda: self.on_new_setup(), w)
+            key("Ctrl+Shift+N", lambda: self.on_new_folder(), w)
+        key("Ctrl+F", lambda: (self._on_page(0), self.search.setFocus(), self.search.selectAll()), self,
+            QtCore.Qt.WidgetWithChildrenShortcut)
+
+    def flash(self, text):
+        """Status bar message that stays a few seconds (a plain setText is overwritten by the next refresh)."""
+        self._flash_text = text
+        self.status.setText(text)
+        self._flash_timer.start()
+
+    def on_window_activated(self):
+        """Back from 3ds Max: the scene may have changed, so re-read it for the 'differs' dots."""
+        if self.pages.currentIndex() == 0 and self._board is not None:
+            self._refresh_timer.start()
+
+    def save_view_state(self):
+        cols = [m.key for i, m in enumerate(self.tree.cols, start=1) if not self.tree.isColumnHidden(i)]
+        cfg = config.load()
+        new = dict(tree_columns=cols, splitter=self.split.sizes() if self.split.orientation() == QtCore.Qt.Horizontal
+                   else cfg.get("splitter"), collapsed_cards=sorted(self.collapsed))
+        if any(cfg.get(k) != v for k, v in new.items()):
+            config.update(**new)
 
     # ======================================================================
     # building
@@ -438,7 +527,7 @@ class Panel(QtWidgets.QWidget):
         self.view_toggle.setIcon(icons.get("grid", theme.ACCENT))
         self.view_toggle.setToolTip("Show thumbnails / show tree")
         self.view_toggle.setCheckable(True)
-        self.view_toggle.toggled.connect(lambda on: (self.views.setCurrentIndex(1 if on else 0), self.refresh()))
+        self.view_toggle.toggled.connect(lambda on: (self.views.setCurrentIndex(1 if on else 0), self.refresh_tree()))
         top.addWidget(self.view_toggle)
         nf = QtWidgets.QToolButton()
         nf.setObjectName("SMPlain")
@@ -560,7 +649,10 @@ class Panel(QtWidgets.QWidget):
         self.card_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         dl.addWidget(self.card_scroll, 1)
         self.split.addWidget(detail)
-        self.split.setSizes([400, 640])
+        self.split.setStretchFactor(0, 0)
+        self.split.setStretchFactor(1, 1)  # extra width goes to the cards
+        sizes = config.load().get("splitter")
+        self.split.setSizes(sizes if sizes and len(sizes) == 2 else [330, 850])
         return self.split
 
     def _build_render_page(self):
@@ -685,7 +777,8 @@ class Panel(QtWidgets.QWidget):
         self.refresh_chips()
         self.refresh_tree()
         self.refresh_detail()
-        self.refresh_queue()
+        if self.pages.currentIndex() == 1:
+            self.refresh_queue()
         self.refresh_status()
 
     def refresh_status(self):
@@ -701,7 +794,10 @@ class Panel(QtWidgets.QWidget):
             text += "   ·   baseline"
         if repair.NOTICES:
             text = "⚠ " + repair.NOTICES[-1]
-        self.status.setText(text)
+        if self._flash_timer.isActive() and self._flash_text:
+            text = self._flash_text
+        if self.status.text() != text:
+            self.status.setText(text)
         on = max_server.is_running()
         self.claude_dot.setText("● Claude connected" if on else "○ Claude off")
         self.claude_dot.setStyleSheet("color: %s;" % ("#30d158" if on else theme.LABEL_3))
@@ -715,30 +811,52 @@ class Panel(QtWidgets.QWidget):
         self.claude_log.addItems(list(reversed(commands.LOG)))
 
     def refresh_chips(self):
+        sig = (tuple(sorted((t, n) for t, n in self._tag_counts().items())), len(self.mgr.setups()),
+               tuple(sorted(self.tag_filter)))
+        if sig == self._chips_sig:
+            return
+        self._chips_sig = sig
         while self.chips.count():
             it = self.chips.takeAt(0)
             if it.widget():
+                it.widget().hide()
                 it.widget().deleteLater()
-        tags = {}
-        for s in self.mgr.items:
-            for t in s.get("tags", []):
-                tags[t] = tags.get(t, 0) + 1
+        tags = self._tag_counts()
         self.tag_filter &= set(tags)
         self.chips_holder.setVisible(bool(tags))
-        all_btn = QtWidgets.QPushButton("All %d" % len(self.mgr.setups()))
+        all_btn = QtWidgets.QPushButton("All %d" % len(self.mgr.setups()), self.chips_holder)
         all_btn.setObjectName("SMChip")
         all_btn.setCheckable(True)
         all_btn.setChecked(not self.tag_filter)
         all_btn.clicked.connect(lambda: (self.tag_filter.clear(), self.refresh_chips(), self.refresh_tree()))
         self.chips.addWidget(all_btn)
         for t in sorted(tags):
-            b = QtWidgets.QPushButton("%s %d" % (t, tags[t]))
+            b = QtWidgets.QPushButton("%s %d" % (t, tags[t]), self.chips_holder)
             b.setObjectName("SMChip")
             b.setCheckable(True)
             b.setChecked(t in self.tag_filter)
             b.clicked.connect(lambda on, t=t: (self.tag_filter.add(t) if on else self.tag_filter.discard(t),
                                                self.refresh_chips(), self.refresh_tree()))
             self.chips.addWidget(b)
+
+    def _tag_counts(self):
+        tags = {}
+        for s in self.mgr.items:
+            for t in s.get("tags", []):
+                tags[t] = tags.get(t, 0) + 1
+        return tags
+
+    def _thumb_icon(self, item, w, h):
+        """Rounded thumbnail icon, decoded once per thumbnail (not on every refresh)."""
+        b64 = item.get("thumbnail")
+        key = (item["id"], w, h)
+        hit = self._thumbs.get(key)
+        if hit is not None and hit[0] is b64:
+            return hit[1]
+        pm = thumbnails.to_pixmap(b64)
+        icon = QtGui.QIcon(icons.rounded(pm, 8) if not pm.isNull() else icons.placeholder(w, h))
+        self._thumbs[key] = (b64, icon)
+        return icon
 
     def _visible(self, item):
         text = self.search.text().strip().lower()
@@ -760,25 +878,34 @@ class Panel(QtWidgets.QWidget):
         self._building = True
         try:
             self.count_label.setText(str(len(self.mgr.setups())))
-            self.tree.rebuild()
-            self.grid.clear()
-            for s in self.mgr.setups():
-                if not self._visible(s):
-                    continue
-                it = QtWidgets.QListWidgetItem(s["name"])
-                it.setData(ID_ROLE, s["id"])
-                pm = thumbnails.to_pixmap(s.get("thumbnail"))
-                it.setIcon(QtGui.QIcon(icons.rounded(pm, 8) if not pm.isNull() else icons.placeholder(*thumbnails.SIZE)))
-                it.setToolTip("\n".join([self.mgr.path(s)] + self.mgr.describe(s)))
-                if s["id"] == self.mgr.active_id:
-                    f = it.font()
-                    f.setBold(True)
-                    it.setFont(f)
-                self.grid.addItem(it)
-                if s["id"] == self.selected:
-                    self.grid.setCurrentItem(it)
+            if self.views.currentIndex() == 0:
+                self.tree.sync()
+            else:
+                self._sync_grid()
         finally:
             self._building = False
+
+    def _sync_grid(self):
+        """Thumbnail view: items are reused; the list is only refilled when setups appear, go or move."""
+        shown = [s for s in self.mgr.setups() if self._visible(s)]
+        ids = [s["id"] for s in shown]
+        if [self.grid.item(i).data(ID_ROLE) for i in range(self.grid.count())] != ids:
+            self.grid.clear()
+            for s in shown:
+                it = QtWidgets.QListWidgetItem()
+                it.setData(ID_ROLE, s["id"])
+                self.grid.addItem(it)
+        for i, s in enumerate(shown):
+            it = self.grid.item(i)
+            if it.text() != s["name"]:
+                it.setText(s["name"])
+            it.setIcon(self._thumb_icon(s, *thumbnails.SIZE))
+            f = it.font()
+            if f.bold() != (s["id"] == self.mgr.active_id):
+                f.setBold(s["id"] == self.mgr.active_id)
+                it.setFont(f)
+            if s["id"] == self.selected and self.grid.currentItem() is not it:
+                self.grid.setCurrentItem(it)
 
     def refresh_detail(self):
         item = self.mgr.get(self.selected)
@@ -791,17 +918,16 @@ class Panel(QtWidgets.QWidget):
             self.tags_edit.setText("")
             self.folder_note.setText("No setups yet. Set up the scene and press New Setup.")
             self.thumb.setIcon(QtGui.QIcon(icons.placeholder(112, 63)))
-            self.card_scroll.setWidget(QtWidgets.QWidget())
+            self.refresh_cards()
             return
         is_folder = item["type"] == "folder"
-        self.name_edit.setText(item["name"])
-        self.desc_edit.setText(item.get("description", ""))
-        self.tags_edit.setText(", ".join(item.get("tags", [])))
-        for e in (self.name_edit, self.desc_edit, self.tags_edit):
-            e.setCursorPosition(0)
+        for e, text in ((self.name_edit, item["name"]), (self.desc_edit, item.get("description", "")),
+                        (self.tags_edit, ", ".join(item.get("tags", [])))):
+            if e.text() != text and not (e.hasFocus() and e.isModified()):  # never overwrite what is being typed
+                e.setText(text)
+                e.setCursorPosition(0)
         self.apply_btn.setEnabled(not is_folder)
-        pm = thumbnails.to_pixmap(item.get("thumbnail"))
-        self.thumb.setIcon(QtGui.QIcon(icons.rounded(pm, 8) if not pm.isNull() else icons.placeholder(112, 63)))
+        self.thumb.setIcon(self._thumb_icon(item, 112, 63))
         if is_folder:
             n = len([d for d in self.mgr.descendants(item["id"]) if d["type"] == "setup"])
             self.folder_note.setText("Folder. Values set here pass down to the %d setup(s) inside; "
@@ -814,50 +940,63 @@ class Panel(QtWidgets.QWidget):
                                 if item["id"] == self.mgr.active_id and self.mgr.last_apply_ms is not None else "")
         self.refresh_cards()
 
-    def refresh_cards(self):
+    def refresh_cards(self, force=False):
+        """Show the cards of the selected item. Cards that are already on screen are updated in place
+        (values, dots, ticks); a card is only built when its module is new on the board."""
         item = self.mgr.get(self.selected)
         L = layout.current()
         cols = self._columns()
-        cards = []
-        empty = None
+        tok = (repr(sorted(L.items())), cols)
+        mods, empty = [], None
         if item is not None:
             cat = self.category or "all"
-            mods = [m for m in registry.modules()
-                    if (m.key in item["modules"] or self.mgr.module_state(item, m.key)["enabled"])
-                    and (cat == "all" or groups.group_of(m) == cat)]
-            for m in sort_modules(mods):
-                cards.append(ModuleCard(self.mgr, item, m, collapsed=m.key in self.collapsed,
-                                        on_collapse=self._on_card_collapse))
+            mods = sort_modules([m for m in registry.modules()
+                                 if (m.key in item["modules"] or self.mgr.module_state(item, m.key)["enabled"])
+                                 and (cat == "all" or groups.group_of(m) == cat)])
             if not mods:
                 empty = ("No %s modules on this %s. Use + in the left bar." % (
                     groups.LABEL.get(cat, "").lower(), item["type"])) if cat != "all" \
                     else "No modules on this %s. Use + in the left bar." % item["type"]
-        holder = CardBoard(cards, cols, L["card_gap"], self.refresh_cards, col_width=L["card_min_width"])
+        note = None
         if empty:
-            lbl = QtWidgets.QLabel(empty)
-            lbl.setObjectName("SMMuted")
-            holder.add_note(lbl)
-        old = self.card_scroll.takeWidget()
-        if old is not None:
-            # takeWidget() leaves the old board without a parent; hidden first, it can never show up
-            # as a stray top-level window before deleteLater runs (the "windows popping up" on resize).
-            old.hide()
-            old.setParent(None)
-            old.deleteLater()
-        bar = self.card_scroll.verticalScrollBar()
-        keep = bar.value()
-        self.card_scroll.setWidget(holder)
-        QtCore.QTimer.singleShot(0, lambda: bar.setValue(keep))
-        self._card_cols = cols
+            note = QtWidgets.QLabel(empty)
+            note.setObjectName("SMMuted")
+        board = self._board
+        if force or board is None or tok != self._board_tok:
+            cards = [ModuleCard(self.mgr, item, m, collapsed=m.key in self.collapsed,
+                                on_collapse=self._on_card_collapse) for m in mods]
+            board = CardBoard(cards, cols, L["card_gap"], None, col_width=L["card_min_width"])
+            if note is not None:
+                board.add_note(note)
+            old = self.card_scroll.takeWidget()
+            if old is not None:
+                old.hide()  # hidden before it loses its parent, so it can never flash as a window
+                old.deleteLater()
+            bar = self.card_scroll.verticalScrollBar()
+            keep = bar.value()
+            self.card_scroll.setWidget(board)
+            QtCore.QTimer.singleShot(0, lambda: bar.setValue(keep))
+            self._board, self._board_tok = board, tok
+            return
+        have = {c.m.key: c for c in board.cards}
+        cards = []
+        for m in mods:
+            c = have.get(m.key)
+            if c is None:
+                c = ModuleCard(self.mgr, item, m, parent=board, collapsed=m.key in self.collapsed,
+                               on_collapse=self._on_card_collapse)
+            else:
+                c.sync(item)
+            cards.append(c)
+        if [id(c) for c in cards] != [id(c) for c in board.cards] or note is not None or board.extra:
+            board.set_cards(cards, note)
 
     def _on_card_collapse(self, key, collapsed):
         (self.collapsed.add if collapsed else self.collapsed.discard)(key)
-        cfg = config.load()
-        cfg["collapsed_cards"] = sorted(self.collapsed)
-        config.save(cfg)
+        config.update(collapsed_cards=sorted(self.collapsed))
 
     def refresh_queue(self):
-        self.queue.clear()
+        self.queue.clear()  # only called while the Render page is open
         for s in batch.expand(self.mgr, sorted(self.checked, key=self._order_index)):
             QtWidgets.QTreeWidgetItem(self.queue, [
                 self.mgr.path(s), self.mgr.summary(s, "camera"), self.mgr.summary(s, "output"),
@@ -883,8 +1022,7 @@ class Panel(QtWidgets.QWidget):
 
     def _on_layout_changed(self):
         self.setStyleSheet(theme.stylesheet(self.glass))
-        self._card_cols = None
-        self.refresh_cards()
+        self.refresh_cards(force=True)
 
     def paintEvent(self, event):
         if self.glass:
@@ -908,7 +1046,7 @@ class Panel(QtWidgets.QWidget):
         orient = QtCore.Qt.Vertical if self.width() < NARROW else QtCore.Qt.Horizontal
         if self.split.orientation() != orient:
             self.split.setOrientation(orient)
-            self.split.setSizes([260, 400] if orient == QtCore.Qt.Vertical else [400, 640])
+            self.split.setSizes([260, 400] if orient == QtCore.Qt.Vertical else [330, 850])
 
     # ======================================================================
     # actions
@@ -942,31 +1080,38 @@ class Panel(QtWidgets.QWidget):
     @_guard
     def on_new_setup(self, parent=False):
         parent = self._target_parent() if parent is False else parent
-        name, ok = QtWidgets.QInputDialog.getText(self, "New setup", "Name:",
-                                                  text="Setup %d" % (len(self.mgr.setups()) + 1))
-        if ok:
-            s = self.mgr.add_setup(name.strip() or None, parent=parent, thumbnail=thumbnails.capture_viewport())
-            self.selected = s["id"]
-            self.refresh()
+        # No dialog: the setup appears at once with a default name, ready to be renamed in the list.
+        try:
+            thumb = thumbnails.capture_viewport()
+        except Exception:
+            thumb = None
+        s = self.mgr.add_setup(None, parent=parent, thumbnail=thumb)
+        self._reveal(s["id"], rename=True)
+
+    def _reveal(self, iid, rename=False):
+        self.selected = iid
+        if self.search.text() or self.tag_filter:  # a new item must not be hidden by the filter
+            self.tag_filter.clear()
+            self.search.clear()
+        self.refresh()
+        if self.views.currentIndex() == 0:
+            self.tree.reveal(iid, rename)
 
     @_guard
     def on_new_folder(self, parent=False):
         parent = self._target_parent() if parent is False else parent
-        name, ok = QtWidgets.QInputDialog.getText(self, "New folder", "Name:", text="Folder")
-        if ok:
-            f = self.mgr.add_folder(name.strip() or "Folder", parent=parent)
-            self.selected = f["id"]
-            self.refresh()
+        f = self.mgr.add_folder("Folder", parent=parent)
+        self._reveal(f["id"], rename=True)
 
     @_guard
     def on_activate(self, iid):
         item = self.mgr.get(iid)
         if item is None or item["type"] != "setup":
             return
-        errors = self.mgr.apply(iid)
+        errors = self.mgr.apply(iid, undo="Scene Manager: activate %s" % item["name"])
         self.selected = iid
-        self.status.setText(("Activated %s in %d ms" % (self.mgr.path(item), self.mgr.last_apply_ms))
-                            if not errors else "Activated with errors: " + "; ".join(errors))
+        self.flash(("Activated %s in %d ms" % (self.mgr.path(item), self.mgr.last_apply_ms))
+                   if not errors else "Activated with errors: " + "; ".join(errors))
 
     @_guard
     def on_thumbnail(self, iid=None):
@@ -982,9 +1127,10 @@ class Panel(QtWidgets.QWidget):
 
     @_guard
     def on_duplicate(self, iid=None):
+        if self.mgr.get(iid or self.selected) is None:
+            return
         c = self.mgr.duplicate(iid or self.selected)
-        self.selected = c["id"]
-        self.refresh()
+        self._reveal(c["id"])
 
     @_guard
     def on_delete(self, iid=None):
@@ -1040,7 +1186,7 @@ class Panel(QtWidgets.QWidget):
                    bridge_port=self.port.value(), glass_backdrop=self.glass_box.isChecked(),
                    backdrop_scheme=self.scheme_box.currentData())
         config.save(cfg)
-        self.status.setText("Settings saved.")
+        self.flash("Settings saved.")
 
     def _preview_scheme(self):
         self.scheme = self.scheme_box.currentData()
@@ -1061,7 +1207,7 @@ class Panel(QtWidgets.QWidget):
             if not fn.endswith(".json"):
                 fn += ".smsetups.json"
             n = self.mgr.export_items(ids, fn)
-            self.status.setText("Exported %d setup(s) to %s" % (n, fn))
+            self.flash("Exported %d setup(s) to %s" % (n, fn))
 
     @_guard
     def on_import(self, parent=None):
@@ -1069,7 +1215,7 @@ class Panel(QtWidgets.QWidget):
                                                       "Scene Manager presets (*.json)")
         if fn:
             added = self.mgr.import_items(fn, parent=parent)
-            self.status.setText("Imported %d setup(s). Cameras and lights are matched by name." % len(added))
+            self.flash("Imported %d setup(s). Cameras and lights are matched by name." % len(added))
 
     def _set_color(self, iid, color):
         self.mgr.update_item(iid, color=color)
@@ -1127,9 +1273,6 @@ class Panel(QtWidgets.QWidget):
         pop.move(pos.x(), max(avail.top(), min(pos.y(), avail.bottom() - pop.height())))
         pop.show()
 
-    def closeEvent(self, event):
-        self.mgr.remove_listener(self.schedule_refresh)
-        super().closeEvent(event)
 
 
 class ModulePalette(QtWidgets.QFrame):
@@ -1183,7 +1326,17 @@ class ModulePalette(QtWidgets.QFrame):
                 b.setIcon(icons.tinted(icon_name, tint if not on else theme.LABEL_3))
                 b.setIconSize(QtCore.QSize(16, 16))
                 b.setText(m.label.replace("&", "&&") + ("  ✓" if on else ""))
-                b.setToolTip("Already on this %s" % item["type"] if on else "Add %s, filled from the scene" % m.label)
+                try:
+                    usable = bool(m.available())
+                except Exception:
+                    usable = True
+                if on:
+                    b.setToolTip("Already on this %s" % item["type"])
+                elif not usable:  # still addable on purpose, but say why it is not there by default
+                    b.setToolTip("Add %s. Not part of a new setup in this scene (other renderer, or nothing "
+                                 "for it to control yet)." % m.label)
+                else:
+                    b.setToolTip("Add %s, filled from the scene" % m.label)
                 b.setEnabled(not on)
                 b.setMinimumWidth(190)
                 b.setFixedHeight(32)
@@ -1214,11 +1367,44 @@ class ModulePalette(QtWidgets.QFrame):
         self.adjustSize()
 
 
+_setup_icons = {}
+
+
+def _setup_icon(color, active):
+    """Setup marker in the list: its colour bar, plus an accent dot when it is the active setup."""
+    key = (color, active)
+    if key not in _setup_icons:
+        pm = QtGui.QPixmap(36, 32)
+        pm.setDevicePixelRatio(2)
+        pm.fill(QtCore.Qt.transparent)
+        p = QtGui.QPainter(pm)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setPen(QtCore.Qt.NoPen)
+        if color:
+            p.setBrush(QtGui.QColor(color))
+            p.drawRoundedRect(QtCore.QRectF(1, 1, 3, 14), 1.5, 1.5)
+        if active:
+            p.setBrush(QtGui.QColor(theme.ACCENT))
+            p.drawEllipse(QtCore.QRectF(8, 4.5, 7, 7))
+        else:
+            pen = QtGui.QPen(QtGui.QColor(theme.LABEL_3))
+            pen.setWidthF(1.2)
+            p.setPen(pen)
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.drawEllipse(QtCore.QRectF(8.6, 5.1, 5.8, 5.8))
+        p.end()
+        _setup_icons[key] = QtGui.QIcon(pm)
+    return _setup_icons[key]
+
+
 class SetupTree(QtWidgets.QTreeWidget):
-    """Folders and setups. Drag to reorder or move into folders; tick to queue for rendering."""
+    """Folders and setups. Drag to reorder or move into folders; tick to queue for rendering.
+
+    sync() updates the rows in place; the tree is only refilled when items appear, go or move, so the
+    scroll position, the selection and an open rename editor survive every other change."""
 
     def __init__(self, panel):
-        super().__init__()
+        super().__init__(panel)
         self.panel = panel
         self.mgr = panel.mgr
         self.cols = [m for m in registry.modules() if m.column]
@@ -1227,6 +1413,12 @@ class SetupTree(QtWidgets.QTreeWidget):
         self.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.setEditTriggers(QtWidgets.QAbstractItemView.EditKeyPressed)
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.setUniformRowHeights(True)   # lets Qt skip measuring every row
+        self.setAllColumnsShowFocus(True)
+        self.setIndentation(16)
+        self.setIconSize(QtCore.QSize(18, 16))
+        self.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+        self.setMouseTracking(True)
         self.customContextMenuRequested.connect(
             lambda pos: panel._context_menu(self.itemAt(pos) and self.itemAt(pos).data(0, ID_ROLE),
                                             self.viewport().mapToGlobal(pos)))
@@ -1235,15 +1427,25 @@ class SetupTree(QtWidgets.QTreeWidget):
         self.header().setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.header().customContextMenuRequested.connect(self._header_menu)
         self.header().setMinimumSectionSize(40)
+        self.header().setToolTip("Right-click to choose the columns")
+        shown = config.load().get("tree_columns")
+        if shown is None:
+            shown = ["camera", "output"]  # a slim list by default; the rest is one right-click away
         for i, m in enumerate(self.cols, start=1):
-            if m.key == "time":
-                self.setColumnHidden(i, True)  # right-click the header to show/hide columns
+            self.setColumnHidden(i, m.key not in shown)
         self.currentItemChanged.connect(lambda cur, _: cur and panel.select(cur.data(0, ID_ROLE)))
         self.itemDoubleClicked.connect(lambda it, col: panel.on_activate(it.data(0, ID_ROLE)))
         self.itemChanged.connect(self._on_changed)
-        self.itemExpanded.connect(lambda it: panel.collapsed.discard(it.data(0, ID_ROLE)))
-        self.itemCollapsed.connect(lambda it: panel.collapsed.add(it.data(0, ID_ROLE)))
+        self.itemExpanded.connect(lambda it: self._on_fold(it, False))
+        self.itemCollapsed.connect(lambda it: self._on_fold(it, True))
         self._items = {}
+        self._structure = None
+        self._widths = None
+
+    def _on_fold(self, it, folded):
+        if self.panel._building or self.panel._filtering():
+            return
+        (self.panel.collapsed.add if folded else self.panel.collapsed.discard)(it.data(0, ID_ROLE))
 
     def _header_menu(self, pos):
         menu = QtWidgets.QMenu(self)
@@ -1251,62 +1453,171 @@ class SetupTree(QtWidgets.QTreeWidget):
             a = menu.addAction(m.column)
             a.setCheckable(True)
             a.setChecked(not self.isColumnHidden(i))
-            a.toggled.connect(lambda on, i=i: self.setColumnHidden(i, not on))
+            a.toggled.connect(lambda on, i=i: self._toggle_column(i, on))
         menu.exec(self.header().mapToGlobal(pos))
 
-    def rebuild(self):
-        p = self.panel
-        self.blockSignals(True)
-        self.clear()
-        self._items = {}
-        active = self.mgr.active_id
+    def _toggle_column(self, i, on):
+        self.setColumnHidden(i, not on)
+        self._widths = None
+        self.sync()
+        self.panel.save_view_state()
 
-        def add(parent_widget, parent_id):
+    # ---- painting: one rounded highlight across the whole row ----
+    def drawRow(self, painter, option, index):
+        sel = self.selectionModel().isSelected(index)
+        hover = index.row() == getattr(self, "_hover_row", -1) and index.parent() == getattr(self, "_hover_parent", None)
+        if sel or hover:
+            painter.save()
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+            painter.setPen(QtCore.Qt.NoPen)
+            c = QtGui.QColor(theme.ACCENT) if sel else QtGui.QColor(255, 255, 255)
+            c.setAlpha(64 if sel else 12)
+            painter.setBrush(c)
+            r = QtCore.QRectF(2, option.rect.y() + 1, self.viewport().width() - 4, option.rect.height() - 2)
+            painter.drawRoundedRect(r, 6, 6)
+            painter.restore()
+        super().drawRow(painter, option, index)
+
+    def mouseMoveEvent(self, e):
+        idx = self.indexAt(e.position().toPoint())
+        row, parent = (idx.row(), idx.parent()) if idx.isValid() else (-1, None)
+        if (row, parent) != (getattr(self, "_hover_row", -1), getattr(self, "_hover_parent", None)):
+            self._hover_row, self._hover_parent = row, parent
+            self.viewport().update()
+        super().mouseMoveEvent(e)
+
+    def leaveEvent(self, e):
+        self._hover_row, self._hover_parent = -1, None
+        self.viewport().update()
+        super().leaveEvent(e)
+
+    def viewportEvent(self, e):
+        # Tooltips are built when asked for, not for every row on every refresh.
+        if e.type() == QtCore.QEvent.ToolTip:
+            it = self.itemAt(e.pos())
+            item = self.mgr.get(it.data(0, ID_ROLE)) if it is not None else None
+            if item is not None and item["type"] == "setup":
+                lines = [self.mgr.path(item)] + self.mgr.describe(item)
+                if item.get("description"):
+                    lines.append(item["description"])
+                QtWidgets.QToolTip.showText(e.globalPos(), "\n".join(lines), self)
+            else:
+                QtWidgets.QToolTip.hideText()
+            return True
+        return super().viewportEvent(e)
+
+    # ---- content ----
+    def _visible_structure(self):
+        p, out = self.panel, []
+
+        def walk(parent_id):
             for item in self.mgr.children(parent_id):
-                if not p._visible(item):
-                    continue
-                w = QtWidgets.QTreeWidgetItem(parent_widget)
-                w.setData(0, ID_ROLE, item["id"])
-                w.setText(0, item["name"])
-                w.setIcon(0, icons.tinted("folder", item.get("color") or theme.LABEL_2) if item["type"] == "folder"
-                          else _swatch(item.get("color")))
-                flags = QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsEditable | \
-                    QtCore.Qt.ItemIsDragEnabled | QtCore.Qt.ItemIsUserCheckable
-                f = w.font(0)
-                if item["type"] == "folder":
-                    flags |= QtCore.Qt.ItemIsDropEnabled | QtCore.Qt.ItemIsAutoTristate
-                    f.setBold(True)
-                    n = len([d for d in self.mgr.descendants(item["id"]) if d["type"] == "setup"])
-                    w.setText(1, "(%d)" % n)
-                    w.setForeground(1, QtGui.QBrush(QtGui.QColor(theme.LABEL_3)))
-                else:
-                    for i, m in enumerate(self.cols, start=1):
-                        w.setText(i, self.mgr.summary(item, m.key))
-                        w.setForeground(i, QtGui.QBrush(QtGui.QColor(theme.LABEL_2)))
-                    if item["id"] == active:
-                        f.setBold(True)
-                        w.setText(0, item["name"] + "  ●")
-                        w.setForeground(0, QtGui.QBrush(QtGui.QColor(theme.ACCENT)))
-                    w.setToolTip(0, "\n".join([self.mgr.path(item)] + self.mgr.describe(item)
-                                              + ([item["description"]] if item.get("description") else [])))
-                w.setFont(0, f)
-                w.setFlags(flags)
-                w.setCheckState(0, QtCore.Qt.Checked if item["id"] in p.checked else QtCore.Qt.Unchecked)
-                self._items[item["id"]] = w
-                if item["type"] == "folder":
-                    add(w, item["id"])
-                    w.setExpanded(item["id"] not in p.collapsed or p._filtering())
+                if p._visible(item):
+                    out.append((item["id"], parent_id))
+                    if item["type"] == "folder":
+                        walk(item["id"])
 
-        add(self.invisibleRootItem(), None)
-        if p.selected in self._items:
-            self.setCurrentItem(self._items[p.selected])
-        self.blockSignals(False)
-        for i in range(1, self.columnCount()):
-            self.resizeColumnToContents(i)
+        walk(None)
+        return out
+
+    def _fill(self, w, item):
+        """Write one row. Only fields that changed are touched, so an unchanged tree repaints nothing."""
+        p = self.panel
+        active = item["id"] == self.mgr.active_id
+        folder = item["type"] == "folder"
+
+        def text(col, value):
+            if w.text(col) != value:
+                w.setText(col, value)
+
+        if self.state() != QtWidgets.QAbstractItemView.EditingState or self.currentItem() is not w:
+            text(0, item["name"])
+        look = (item.get("color"), active, folder)
+        if w.data(0, ID_ROLE + 1) != look:
+            w.setData(0, ID_ROLE + 1, look)
+            w.setIcon(0, icons.tinted("folder", item.get("color") or theme.LABEL_2) if folder
+                      else _setup_icon(item.get("color"), active))
+            f = w.font(0)
+            f.setBold(folder or active)
+            w.setFont(0, f)
+            w.setForeground(0, QtGui.QBrush(QtGui.QColor(theme.ACCENT if active else theme.LABEL)))
+        if folder:
+            n = len([d for d in self.mgr.descendants(item["id"]) if d["type"] == "setup"])
+            first = next((i for i in range(1, self.columnCount()) if not self.isColumnHidden(i)), None)
+            for i in range(1, self.columnCount()):
+                text(i, ("%d" % n) if i == first else "")
+        else:
+            for i, m in enumerate(self.cols, start=1):
+                if not self.isColumnHidden(i):
+                    text(i, self.mgr.summary(item, m.key))
+            state = QtCore.Qt.Checked if item["id"] in p.checked else QtCore.Qt.Unchecked
+            if w.checkState(0) != state:
+                w.setCheckState(0, state)
+
+    def sync(self):
+        p = self.panel
+        structure = self._visible_structure()
+        vbar = self.verticalScrollBar()
+        self.blockSignals(True)
+        try:
+            if structure != self._structure:
+                keep = vbar.value()
+                self.clear()
+                self._items = {}
+                muted = QtGui.QBrush(QtGui.QColor(theme.LABEL_2))
+                for iid, parent_id in structure:
+                    item = self.mgr.get(iid)
+                    w = QtWidgets.QTreeWidgetItem(self._items[parent_id] if parent_id else self.invisibleRootItem())
+                    w.setData(0, ID_ROLE, iid)
+                    flags = QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsEditable | \
+                        QtCore.Qt.ItemIsDragEnabled | QtCore.Qt.ItemIsUserCheckable
+                    if item["type"] == "folder":
+                        flags |= QtCore.Qt.ItemIsDropEnabled | QtCore.Qt.ItemIsAutoTristate
+                    w.setFlags(flags)
+                    w.setCheckState(0, QtCore.Qt.Unchecked)
+                    for i in range(1, self.columnCount()):
+                        w.setForeground(i, muted)
+                    self._items[iid] = w
+                self._structure = structure
+                for iid, _parent in structure:
+                    item = self.mgr.get(iid)
+                    self._fill(self._items[iid], item)
+                    if item["type"] == "folder":
+                        self._items[iid].setExpanded(iid not in p.collapsed or p._filtering())
+                vbar.setValue(keep)
+            else:
+                for iid, _parent in structure:
+                    self._fill(self._items[iid], self.mgr.get(iid))
+            cur = self._items.get(p.selected)
+            if cur is not None and self.currentItem() is not cur:
+                self.setCurrentItem(cur)
+        finally:
+            self.blockSignals(False)
+        widths = tuple(self._items[iid].text(i) for iid, _ in structure for i in range(1, self.columnCount()))
+        if widths != self._widths:  # column widths only when a column's text changed
+            self._widths = widths
+            for i in range(1, self.columnCount()):
+                if not self.isColumnHidden(i):
+                    self.resizeColumnToContents(i)
+        self.viewport().update()
+
+    rebuild = sync  # old name
+
+    def reveal(self, iid, rename=False):
+        w = self._items.get(iid)
+        if w is None:
+            return
+        parent = w.parent()
+        while parent is not None:
+            parent.setExpanded(True)
+            parent = parent.parent()
+        self.scrollToItem(w)
+        self.setFocus()
+        if rename:
+            self.editItem(w, 0)
 
     def edit_item(self, iid):
-        if iid in self._items:
-            self.editItem(self._items[iid], 0)
+        self.reveal(iid, rename=True)
 
     def _on_changed(self, w, col):
         if col != 0 or self.panel._building:
@@ -1319,14 +1630,19 @@ class SetupTree(QtWidgets.QTreeWidget):
         state = w.checkState(0)
         if item["type"] == "setup":
             (self.panel.checked.add if state == QtCore.Qt.Checked else self.panel.checked.discard)(iid)
-        # rename (the active marker is not part of the name)
-        text = w.text(0).replace("  ●", "").strip()
+        text = w.text(0).strip()
         if text and text != item["name"]:
             self.mgr.update_item(iid, name=text)
-        self.panel.refresh_queue()
+        elif not text:
+            self.blockSignals(True)
+            w.setText(0, item["name"])
+            self.blockSignals(False)
+        if self.panel.pages.currentIndex() == 1:
+            self.panel.refresh_queue()
 
     def dropEvent(self, event):
         super().dropEvent(event)
+        self._structure = None  # Qt moved the rows itself: refill from the manager afterwards
         structure = []
 
         def walk(parent_widget, parent_id):
