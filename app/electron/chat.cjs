@@ -49,8 +49,51 @@ function createChat({ home, log, emit, getRoot }) {
     return null;
   }
 
+  /** The environment for Claude and the tool server. The app is started by 3ds Max and inherits its environment:
+   *  Max's own Python settings and folders would make the user's Python fail or pick Max's Python (no 'mcp'). */
+  function cleanEnv() {
+    const env = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (/^PYTHON/i.test(k) || /^QT_/i.test(k) || /^ADSK_/i.test(k)) continue;
+      env[k] = /^path$/i.test(k) ? String(v).split(path.delimiter).filter((d) => d && !/3ds ?max/i.test(d)).join(path.delimiter) : v;
+    }
+    return env;
+  }
+
+  /** A Python that can import the 'mcp' package: {command, args} with the full path, or {error}. Looked up once. */
+  let python = null;
+  function findPython(def, env) {
+    if (python) return python;
+    const win = process.platform === "win32";
+    const tries = [[def.command, def.pre]];
+    if (win) {
+      tries.push(["py", ["-3"]]);
+      try {
+        const out = execFileSync("where.exe", ["python"], { encoding: "utf8", windowsHide: true, timeout: 5000, env });
+        for (const hit of out.split(/\r?\n/).map((s) => s.trim())) if (hit && !/WindowsApps/i.test(hit)) tries.push([hit, []]);
+      } catch (_) { /* none on PATH */ }
+    } else tries.push(["python3", []]);
+    let why = "";
+    for (const [command, pre] of tries) {
+      try {
+        const exe = execFileSync(command, [...pre, "-c", "import mcp.server.fastmcp, sys; print(sys.executable)"],
+          { encoding: "utf8", windowsHide: true, timeout: 20000, env, stdio: ["ignore", "pipe", "pipe"] }).trim().split(/\r?\n/).pop();
+        log("chat: python " + exe);
+        const direct = exe && fs.existsSync(exe) && !pre.some((a) => !String(a).startsWith("-"));   // e.g. "uv run": keep as written
+        return (python = direct ? { command: exe, args: [] } : { command, args: pre });
+      } catch (e) {
+        const msg = String(e.stderr || e.message || e).trim().split(/\r?\n/).pop();
+        log("chat: python " + command + " " + pre.join(" ") + " failed: " + msg);
+        why = why || msg;
+      }
+    }
+    return { error: /No module named/i.test(why)
+      ? "Python is installed, but its 'mcp' package is missing or not a version this tool can use. In a terminal run: pip install -r claude_bridge/requirements.txt"
+      : "No working Python was found for the 3ds Max tools (" + (why || "python not found") + ")." };
+  }
+
   /** The 3ds Max tool server, as the project's .mcp.json describes it (the python to use), with absolute paths. */
-  function mcpConfigFile(root) {
+  function mcpConfigFile(root, env) {
     let def = { command: "python", args: [] };
     try {
       const own = JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8")).mcpServers || {};
@@ -58,13 +101,14 @@ function createChat({ home, log, emit, getRoot }) {
       if (found && found.command) def = found;
     } catch (_) { /* no .mcp.json: plain python */ }
     const script = path.join(root, "claude_bridge", "mcp_server.py");
-    const args = (def.args || []).filter((a) => !String(a).includes("mcp_server.py"));
-    const cfg = { mcpServers: { [SERVER]: { type: "stdio", command: def.command, args: [...args, script],
-      env: { ...(def.env || {}), SCENE_MANAGER_HOME: home } } } };
+    const py = findPython({ command: def.command, pre: (def.args || []).filter((a) => !String(a).includes("mcp_server.py")) }, env);
+    if (py.error) return py;
+    const cfg = { mcpServers: { [SERVER]: { type: "stdio", command: py.command, args: [...py.args, script],
+      env: { ...(def.env || {}), SCENE_MANAGER_HOME: home, PYTHONUTF8: "1" } } } };
     const file = path.join(home, "chat_mcp.json");
     fs.mkdirSync(home, { recursive: true });
     fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
-    return file;
+    return { file };
   }
 
   function settings(allowOnce) {
@@ -84,8 +128,11 @@ function createChat({ home, log, emit, getRoot }) {
     const root = getRoot();
     if (!root || !fs.existsSync(path.join(root, "claude_bridge", "mcp_server.py")))
       return { ok: false, error: "Not connected to 3ds Max yet (the Scene Manager folder is unknown)." };
+    const env = cleanEnv();
+    const mcp = mcpConfigFile(root, env);
+    if (mcp.error) return { ok: false, error: mcp.error };
     const args = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-      "--mcp-config", mcpConfigFile(root), "--strict-mcp-config",
+      "--mcp-config", mcp.file, "--strict-mcp-config",
       "--tools", "",                       // no shell, no files: only the 3ds Max tools
       "--permission-prompts", "none",      // nothing can ask in the background: unapproved tools are refused
       "--settings", file("chat_settings.json", settings(allowOnce)),       // as files: no quoting trouble on Windows
@@ -96,8 +143,8 @@ function createChat({ home, log, emit, getRoot }) {
     let child;
     try {
       child = viaShell
-        ? spawn(quote(cli) + " " + args.map(quote).join(" "), { cwd: root, shell: true, windowsHide: true })
-        : spawn(cli, args, { cwd: root, windowsHide: true });
+        ? spawn(quote(cli) + " " + args.map(quote).join(" "), { cwd: root, env, shell: true, windowsHide: true })
+        : spawn(cli, args, { cwd: root, env, windowsHide: true });
     } catch (e) { return { ok: false, error: String(e.message || e) }; }
     proc = child;
     log("chat: start" + (session ? " (resume)" : "") + (allowOnce.length ? " allow " + allowOnce.join(",") : ""));
@@ -110,6 +157,7 @@ function createChat({ home, log, emit, getRoot }) {
       if (m.session_id && m.type === "system" && m.subtype === "init") {
         session = m.session_id;
         const server = (m.mcp_servers || []).find((s) => s.name === SERVER);
+        if (server && server.status !== "connected") python = null;   // look again next time
         if (server && server.status !== "connected") out({ kind: "warn", text: "The 3ds Max tools did not start (" + server.status + "). Check that Python and the 'mcp' package are installed: pip install -r claude_bridge/requirements.txt" });
         return;
       }
