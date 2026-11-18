@@ -53,3 +53,12 @@ Handshake: after each connect the app calls `ui_app_attach(hwnd)` and gets the M
 (`rt.windows.getMAXHWND()`); the launcher also passes it as `--max-hwnd=`. If the app cannot set the owner itself,
 3ds Max tries (`from_max=True`). The window has no taskbar button while attached. While 3ds Max is busy
 (rendering, loading) an attached window can be slow to react, because Windows links the two windows' input.
+
+## The board is a free canvas
+
+- A card stays where it is dropped: `gx`, `gy` (dots) per card in `~/.scene_manager/app_ui.json` under `cards`. Drop on an occupied
+  place and it lands in the nearest empty one (`grid.ts` `freeSpot`). Cards never placed by hand are packed into two columns.
+- The board always keeps 24 empty dots right of and below the last card and scrolls both ways; dragging near an edge scrolls.
+- Nothing overlaps: a card that grows or is resized pushes the cards under it down (`grid.ts` `layout`).
+- Smallest card: wide enough for its full title and for label + value + tick (15 dots, tables 22), tall enough for the header
+  and about three rows. A card smaller than its rows scrolls them under a fixed header.

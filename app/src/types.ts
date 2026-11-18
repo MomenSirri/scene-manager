@@ -28,4 +28,4 @@ export interface Detail {
   nodes: Record<string, string[]>;
 }
 /** Per-user look of a card, keyed by module: place and size are in dots of the board grid. */
-export interface CardPref { gx?: number; w?: number; h?: number; color?: string; title?: string; folded?: boolean }
+export interface CardPref { gx?: number; gy?: number; w?: number; h?: number; color?: string; title?: string; folded?: boolean }

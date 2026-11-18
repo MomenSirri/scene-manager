@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { call } from "./api";
 import { ALWAYS, Field, Switch, WIDE } from "./fields";
-import { Cell, COL, dropPlan, GAP, GRID, HEAD_H, MIN_H, MIN_W, MIN_W_TABLE, plan, px, toDots, upDots } from "./grid";
+import { Cell, COL, freeSpot, GAP, GRID, HEAD_H, layout, MIN_H, MIN_W, MIN_W_TABLE, px, ROOM, toDots, upDots } from "./grid";
 import { Icon } from "./icons";
 import type { MenuItem, MenuState } from "./Menu";
 import type { CardData, CardPref, Detail, Group, ModuleSchema, Schema } from "./types";
@@ -10,7 +10,7 @@ export const CARD_COLORS = ["#ff453a", "#ff9f0a", "#30d158", "#2ad4c4", "#64d2ff
 
 interface CardProps {
   item: Detail; card: CardData; mod: ModuleSchema; group: Group; pref: CardPref;
-  onHeight: (key: string, px: number) => void;
+  onHeight: (key: string, px: number, headPx: number) => void;   // height the rows need, width the header needs
   onDragStart: (key: string, e: React.PointerEvent) => void;
   onResizeStart: (key: string, e: React.PointerEvent) => void;
   setPref: (key: string, patch: CardPref) => void;
@@ -22,13 +22,21 @@ function Card({ item, card, mod, group, pref, onHeight, onDragStart, onResizeSta
   const inner = useRef<HTMLDivElement>(null);
   const [renaming, setRenaming] = useState(false);
   const tint = pref.color || group.tint;
-  useLayoutEffect(() => {
-    const el = inner.current!;
-    const ro = new ResizeObserver(() => onHeight(card.key, el.offsetHeight));
-    ro.observe(el);
-    onHeight(card.key, el.offsetHeight);
-    return () => ro.disconnect();
+  // What the content needs, whatever size the card has now: header + all rows, and a header with its full title.
+  const measure = useCallback(() => {
+    const el = inner.current;
+    if (!el) return;
+    const head = el.querySelector(".card-head") as HTMLElement, rows = el.querySelector(".card-rows") as HTMLElement | null;
+    let need = 22;   // header padding
+    for (const c of Array.from(head.children)) if (!c.classList.contains("grow") && !c.classList.contains("origin")) need += Math.ceil(c.getBoundingClientRect().width) + 8;
+    onHeight(card.key, head.offsetHeight + (rows ? rows.offsetHeight + 18 : 0) + 2, need);
   }, [card.key, onHeight]);
+  useLayoutEffect(measure);
+  useLayoutEffect(() => {
+    const ro = new ResizeObserver(measure);
+    ro.observe(inner.current!);
+    return () => ro.disconnect();
+  }, [measure]);
 
   const run = (cmd: string, args: object = {}) =>
     call(cmd, { id: item.id, module: card.key, ...args })
@@ -76,7 +84,7 @@ function Card({ item, card, mod, group, pref, onHeight, onDragStart, onResizeSta
           onChange={(on) => run("ui_set_enabled", { enabled: on })} />
       </div>
       {!pref.folded && (
-        <div className="card-body">
+        <div className="card-body"><div className="card-rows">
           {mod.props.map((p) => {
             const row = card.rows.find((r) => r.key === p.key);
             if (!row || (p.installed === false && !row.own && !row.inherited)) return null;   // other renderer, nothing stored
@@ -99,7 +107,7 @@ function Card({ item, card, mod, group, pref, onHeight, onDragStart, onResizeSta
               </div>
             );
           })}
-        </div>)}
+        </div></div>)}
       <div className="grip" title="Drag to resize (snaps to the dots) · double-click to fit the content"
         onPointerDown={(e) => onResizeStart(card.key, e)} onDoubleClick={() => setPref(card.key, { w: undefined, h: undefined })} />
     </div>
@@ -126,9 +134,14 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
   const mods = useMemo(() => Object.fromEntries(schema.modules.map((m) => [m.key, m])), [schema]);
   const groups = useMemo(() => Object.fromEntries(schema.groups.map((g) => [g.key, g])), [schema]);
   const [heights, setHeights] = useState<Record<string, number>>({});
+  const [headW, setHeadW] = useState<Record<string, number>>({});
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [gesture, setGesture] = useState<Gesture | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
-  const onHeight = useCallback((key: string, h: number) => setHeights((old) => (old[key] === h ? old : { ...old, [key]: h })), []);
+  const onHeight = useCallback((key: string, h: number, w: number) => {
+    setHeights((old) => (old[key] === h ? old : { ...old, [key]: h }));
+    setHeadW((old) => (old[key] === w ? old : { ...old, [key]: w }));
+  }, []);
 
   const cards = item.cards.filter((c) => mods[c.key] && (!category || mods[c.key].group === category));
   const keys = useMemo(() => {
@@ -140,8 +153,10 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
   const limits = useCallback((k: string) => {
     const wide = mods[k]?.props.some((x) => x.kind === "table");
     const natural = Math.max(HEAD_H, upDots(heights[k] ?? 60));
-    return { wide, natural, minW: wide ? MIN_W_TABLE : MIN_W, minH: Math.min(natural, MIN_H) };
-  }, [heights, mods]);
+    // never narrower than the full title needs, nor than label + value + tick need
+    const minW = Math.max(wide ? MIN_W_TABLE : MIN_W, upDots(headW[k] ?? 0));
+    return { wide, natural, minW, minH: Math.min(natural, MIN_H) };
+  }, [heights, headW, mods]);
   const sizeOf = useCallback((k: string) => {
     const p = prefs[k] || {};
     const { wide, natural, minW, minH } = limits(k);
@@ -149,23 +164,30 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
     // as tall as the module's rows need, rounded up to the next dot; a resized card keeps its own height
     return { w, h: p.folded ? natural : Math.max(minH, p.h ?? natural) };
   }, [prefs, limits]);
-  const gxOf = useCallback((k: string) => prefs[k]?.gx, [prefs]);
-  const cells = useMemo(() => plan(keys, sizeOf, gxOf), [keys, sizeOf, gxOf]);
+  const cells = useMemo(() => layout(keys, sizeOf, (k) => prefs[k]), [keys, sizeOf, prefs]);
 
   const local = (e: PointerEvent | React.PointerEvent) => {
     const r = boardRef.current!.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
 
-  const target: { cell: Cell; order: string[]; gx: number } | null = useMemo(() => {
-    if (!gesture || gesture.kind !== "drag" || !gesture.started) return null;
-    return dropPlan(gesture.key, gesture.x - gesture.dx, gesture.y - gesture.dy, gesture.y, keys, cells, sizeOf, gxOf);
-  }, [gesture, keys, cells, sizeOf, gxOf]);
+  // where the dragged card lands: the dot under it, anywhere on the board; the nearest empty space if that is taken
+  const target: Cell | null = useMemo(() => {
+    if (!gesture || gesture.kind !== "drag" || !gesture.started || !cells[gesture.key]) return null;
+    const want = { ...cells[gesture.key], gx: Math.max(0, toDots(gesture.x - gesture.dx)), gy: Math.max(0, toDots(gesture.y - gesture.dy)) };
+    return freeSpot(want, keys.filter((k) => k !== gesture.key).map((k) => cells[k]));
+  }, [gesture, keys, cells]);
 
   useEffect(() => {
     if (!gesture) return;
     const move = (e: PointerEvent) => {
       if (gesture.kind === "drag") {
+        const sc = scrollRef.current;
+        if (sc && gesture.started) {   // near an edge: scroll, so a card can be carried anywhere
+          const r = sc.getBoundingClientRect(), edge = 36, step = 24;
+          sc.scrollBy((e.clientX > r.right - edge ? step : e.clientX < r.left + edge ? -step : 0),
+                      (e.clientY > r.bottom - edge ? step : e.clientY < r.top + edge ? -step : 0));
+        }
         const p = local(e);
         const started = gesture.started || Math.abs(e.clientX - gesture.sx) + Math.abs(e.clientY - gesture.sy) > 4;
         setGesture({ ...gesture, x: p.x, y: p.y, started });
@@ -181,11 +203,10 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
     };
     const up = () => {
       if (gesture.kind === "drag" && target) {
-        // pin every card where it shows now, so the drop moves only the dragged one
+        // every card keeps the place it shows at now; only the dragged one moves
         const next = { ...prefs };
-        for (const k of keys) next[k] = { ...(next[k] || {}), gx: k === gesture.key ? target.gx : cells[k].gx };
+        for (const k of keys) { const c = k === gesture.key ? target : cells[k]; next[k] = { ...(next[k] || {}), gx: c.gx, gy: c.gy }; }
         setPrefs(next);
-        setOrder([...target.order, ...order.filter((k) => !target.order.includes(k))]);
       }
       setGesture(null);
     };
@@ -207,14 +228,14 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
     setGesture({ kind: "resize", key, sx: e.clientX, sy: e.clientY, w0: c.width, h0: c.height });
   };
 
-  const glow = target ? px(target.cell) : gesture?.kind === "resize" && cells[gesture.key] ? px(cells[gesture.key]) : null;
+  const glow = target ? px(target) : gesture?.kind === "resize" && cells[gesture.key] ? px(cells[gesture.key]) : null;
   let right = 0, bottom = 0;
   for (const c of Object.values(cells)) { right = Math.max(right, (c.gx + c.w) * GRID); bottom = Math.max(bottom, (c.gy + c.h) * GRID); }
   if (glow) { right = Math.max(right, glow.left + glow.width); bottom = Math.max(bottom, glow.top + glow.height); }
 
   return (
-    <div className="board-scroll">
-      <div ref={boardRef} className={"board" + (gesture ? " busy" : "")} style={{ width: right + GRID, height: bottom + GRID * 2 }}>
+    <div className="board-scroll" ref={scrollRef}>
+      <div ref={boardRef} className={"board" + (gesture ? " busy" : "")} style={{ width: right + GRID * ROOM, height: bottom + GRID * ROOM }}>
         {glow && <>
           <div className="hot-dots" style={{ left: glow.left - GRID / 2, top: glow.top - GRID / 2, width: glow.width + GRID, height: glow.height + GRID }} />
           <div className={"glow" + (target ? " fill" : "") + (gesture?.kind === "resize" && gesture.atMin ? " limit" : "")} style={glow} />
