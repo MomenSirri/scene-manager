@@ -1,14 +1,28 @@
 """Local batch render: activate each setup and run a production render (same as Render / F9)."""
 import os
+from dataclasses import dataclass, field
 
 from pymxs import runtime as rt
 
-from ..core import tokens
+from ..core import nodes, tokens
+
+
+@dataclass
+class QueueEntry:
+    setup: dict
+    output: str = ""
+    issues: list[str] = field(default_factory=list)
+
+
+def _stored_values(mgr, setup, module):
+    state = mgr.module_state(setup, module)
+    baseline = mgr.baseline.get(module) or {}
+    return {**baseline, **state["values"]} if state["enabled"] else baseline
 
 
 def planned_output(mgr, setup):
-    out = mgr.effective(setup).get("output")
-    if out and out.get("save_file") and out.get("path"):
+    out = _stored_values(mgr, setup, "output")
+    if out.get("save_file") and out.get("path"):
         return tokens.resolve(out["path"], mgr.context(setup))
     return ""
 
@@ -28,15 +42,33 @@ def expand(mgr, keys):
     return out
 
 
-def duplicate_outputs(mgr, keys):
-    seen, dups = {}, []
-    for s in expand(mgr, keys):
-        p = planned_output(mgr, s).lower()
-        if p:
-            if p in seen:
-                dups.append((seen[p], s["name"], p))
-            seen[p] = s["name"]
-    return dups
+def preflight(mgr, keys):
+    """Preview stored camera references and main output paths without activating setups."""
+    entries = []
+    by_output = {}
+    for setup in expand(mgr, keys):
+        entry = QueueEntry(setup)
+        entries.append(entry)
+        camera = _stored_values(mgr, setup, "camera").get("camera")
+        if camera:
+            node = nodes.resolve(camera)
+            if node is None or not nodes.is_camera(node):
+                entry.issues.append("Stored camera unavailable")
+        try:
+            entry.output = planned_output(mgr, setup)
+        except (ValueError, KeyError, IndexError, AttributeError, TypeError):
+            entry.issues.append("Invalid output template")
+        if entry.output:
+            by_output.setdefault(os.path.normcase(entry.output), []).append(entry)
+
+    for matching_entries in by_output.values():
+        if len(matching_entries) > 1:
+            for entry in matching_entries:
+                entry.issues.append("Shared output path")
+        if os.path.isfile(matching_entries[0].output):
+            for entry in matching_entries:
+                entry.issues.append("Output file already exists")
+    return entries
 
 
 def render_setups(mgr, keys, on_progress=None, should_cancel=None):

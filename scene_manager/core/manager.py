@@ -29,6 +29,31 @@ def _scene_redraw(on):
         return False
 
 
+class _RenderDialog:
+    """Keeps an open Render Setup dialog in step with an apply, without closing it.
+
+    While the dialog is open, a later commit (closing it, rendering) writes the dialog's values back,
+    so settings changed by script would be lost. Closing and reopening it around every apply fixed
+    that but made the window flash on every click. Instead: commit the user's pending edits first,
+    apply, then renderSceneDialog.update() so the dialog shows the new values (checked in Max 2026:
+    values survive a later commit). Only a renderer switch, which changes the dialog's tabs, still
+    closes and reopens it, once."""
+
+    def __init__(self, switching):
+        self.open = bool(rt.renderSceneDialog.isOpen())
+        self.closed = self.open and switching
+        if self.closed:
+            rt.renderSceneDialog.close()
+        elif self.open:
+            rt.renderSceneDialog.commit()
+
+    def done(self):
+        if self.closed:
+            rt.renderSceneDialog.open()
+        elif self.open:
+            rt.renderSceneDialog.update()
+
+
 def get_manager():
     global _instance
     if _instance is None:
@@ -385,11 +410,9 @@ class SetupManager:
             raise ValueError("'%s' is a folder; activate a setup inside it" % item["name"])
         t0 = time.perf_counter()
         errors = []
-        was_open = bool(rt.renderSceneDialog.isOpen())
-        if was_open:
-            rt.renderSceneDialog.close()  # render settings do not stick while the dialog is open
         ctx = self.context(item)
         eff = self.effective(item)
+        dialog = _RenderDialog(self._switches_renderer(eff, only))
         base_all = self.baseline
         redraw_off = _scene_redraw(False)  # one viewport redraw at the end instead of one per module
         try:
@@ -422,8 +445,7 @@ class SetupManager:
         finally:
             if redraw_off:
                 _scene_redraw(True)
-            if was_open:
-                rt.renderSceneDialog.open()
+            dialog.done()
         if not only:
             self.data["active"] = item["id"]
             storage.save(self.data)
@@ -431,6 +453,19 @@ class SetupManager:
         self.last_apply_ms = int((time.perf_counter() - t0) * 1000)
         self._notify()
         return errors
+
+    def _switches_renderer(self, eff, only):
+        """True if this apply will change the production renderer (the dialog must then be rebuilt)."""
+        if only and "renderer" not in only:
+            return False
+        want = (eff.get("renderer") or self.baseline.get("renderer") or {}).get("renderer")
+        if not want:
+            return False
+        try:
+            from ..render import rprops
+            return want != rprops.current_kind()
+        except Exception:
+            return True
 
     def differs_from_scene(self, item, key):
         """Props whose effective value differs from the scene right now."""

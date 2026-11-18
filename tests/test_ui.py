@@ -3,7 +3,10 @@
 Checks the things that make the panel feel solid: an edit must not rebuild cards or the setups tree,
 switching setups reuses the cards, and no stray top-level window may ever appear."""
 import sys
+import tempfile
 import time
+from pathlib import Path
+from unittest.mock import patch
 
 from tests import ui_harness
 
@@ -121,6 +124,37 @@ def main():
     pump()
     check(win._grips[1].geometry().right() == win.width() - 1, "window: grips follow the window size")
     check(not spy.windows, "no stray windows opened %s" % spy.windows)
+
+    with tempfile.TemporaryDirectory() as folder:
+        output = Path(folder) / "preview.exr"
+        output.touch()
+        mgr.set_values(day["id"], "output", {"save_file": True, "path": str(output)})
+        mgr.set_values(dusk["id"], "output", {"save_file": True, "path": str(output)})
+        mgr.set_values(dusk["id"], "camera", {"camera": {"name": "Missing camera", "handle": None}})
+        night = mgr.get("Exterior / Night")
+        mgr.set_values(night["id"], "output", {"save_file": True, "path": "{unfinished"})
+        panel.checked = {mgr.get("Exterior")["id"], day["id"]}
+        active = mgr.data["active"]
+        panel.pages.setCurrentIndex(1)
+        panel.refresh_queue()
+        rows = {panel.queue.topLevelItem(i).text(0): panel.queue.topLevelItem(i)
+                for i in range(panel.queue.topLevelItemCount())}
+        checks = rows["Exterior / Day"].toolTip(4)
+        check("Shared output path" in checks and "Output file already exists" in checks
+              and rows["Exterior / Day"].text(5) == str(output), "queue: reports a shared existing file")
+        check("Stored camera unavailable" in rows["Exterior / Dusk"].toolTip(4),
+              "queue: reports a missing stored camera")
+        check("Invalid output template" in rows["Exterior / Night"].toolTip(4),
+              "queue: a malformed output template leaves the queue usable")
+        check(panel.queue.topLevelItemCount() == len(rows),
+              "queue: expanding a folder and a checked child does not duplicate the child")
+        check(mgr.data["active"] == active, "queue: checking leaves the active setup in place")
+        from scene_manager.render import batch
+        with patch.object(QtWidgets.QMessageBox, "exec", return_value=QtWidgets.QMessageBox.Cancel) as dialog, \
+                patch.object(batch, "render_setups") as render:
+            panel.on_render([day["id"], dusk["id"]])
+            check(dialog.called and not render.called, "queue: cancelling preflight does not start a render")
+
     print("\n%d failed" % len(FAILS) if FAILS else "\nall passed")
     return 1 if FAILS else 0
 
