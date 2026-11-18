@@ -36,23 +36,25 @@ keep their left edge and pack upward. Double-click the corner to fit the content
 Tests without Max: `python -m tests.test_bridge_events` (protocol), `python -m tests.test_ui` (Qt panel).
 Not yet run against real 3ds Max.
 
-## Attached to 3ds Max
+## Following 3ds Max
 
-The app window is an owned window of the 3ds Max main window (Win32 `GWLP_HWNDPARENT`).
+The app window stays with 3ds Max without being tied to it (`app/electron/main.cjs` `follow`, every 250 ms, koffi + user32).
 
 | Behaviour | How |
 |---|---|
-| Stays above 3ds Max, not above other programs | owner set in `app/electron/main.cjs` `setOwner()` (koffi, user32) |
-| Hides when Max is minimized, returns with it | done by Windows for owned windows |
-| Minimize button | rolls the window up to its title bar in place (`setRolled`), it never goes to the taskbar |
+| Stays above 3ds Max | "always on top" while the foreground window belongs to 3ds Max or to the app |
+| Does not cover other programs | when another program comes to the front, always-on-top is dropped and the window is placed behind it |
+| Hides when Max is minimized, returns with it | `IsIconic` on the Max main window |
+| Minimize button | rolls the window up to its title bar in place (`setRolled`) |
 | Toolbar button while the app is open | `commands_app.bring_to_front()` shows it, unrolls it and gives it focus |
 | Pin button | above all programs (off by default) |
-| Settings > Attach this window to 3ds Max | off = free window that floats above everything, as before |
+| Settings > Follow 3ds Max | off = free window that floats above everything |
 
 Handshake: after each connect the app calls `ui_app_attach(hwnd)` and gets the Max window handle back
-(`rt.windows.getMAXHWND()`); the launcher also passes it as `--max-hwnd=`. If the app cannot set the owner itself,
-3ds Max tries (`from_max=True`). The window has no taskbar button while attached. While 3ds Max is busy
-(rendering, loading) an attached window can be slow to react, because Windows links the two windows' input.
+(`rt.windows.getMAXHWND()`); the Max process id comes from `bridge.json`.
+
+Do not make the window an owned window of 3ds Max (`GWLP_HWNDPARENT`). That was the first version: it links the input of
+the two programs, and on a real machine pressing the app's title bar minimized 3ds Max (2026-11-18).
 
 ## The board is a free canvas
 

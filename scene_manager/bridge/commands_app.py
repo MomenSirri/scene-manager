@@ -1,8 +1,8 @@
-"""Keeps the Scene Manager app window attached to 3ds Max (Windows only).
+"""Lets the Scene Manager app window follow 3ds Max (Windows only).
 
-The app makes its window an "owned" window of the 3ds Max main window, so Windows keeps it above Max (not above
-other programs), hides it while Max is minimized and shows it again with Max. `ui_app_attach` is the handshake:
-the app sends its window handle and gets the 3ds Max one back.
+`ui_app_attach` is the handshake: the app sends its window handle and gets the 3ds Max one back. The app then keeps
+itself above 3ds Max and hides while Max is minimized (app/electron/main.cjs `follow`). The app window is NOT made
+an owned window of 3ds Max: that was tried and pressing the app's title bar minimized Max.
 """
 import ctypes
 import sys
@@ -40,16 +40,9 @@ def max_hwnd():
 
 
 def ui_app_attach(hwnd=0, from_max=False):
-    """The app reports its window. With from_max, 3ds Max sets the owner itself (used when the app could not)."""
+    """The app reports its window and gets the 3ds Max main window back. `from_max` is no longer used."""
     _app["hwnd"] = int(hwnd or 0)
-    owner = max_hwnd()
-    owned = False
-    u = _user32()
-    if u and _app["hwnd"] and owner and u.IsWindow(_app["hwnd"]):
-        if from_max:
-            u.SetWindowLongPtrW(_app["hwnd"], GWLP_HWNDPARENT, owner)
-        owned = (u.GetWindow(_app["hwnd"], GW_OWNER) or 0) == owner
-    return {"max_hwnd": str(owner), "owned": owned}
+    return {"max_hwnd": str(max_hwnd()), "owned": False}
 
 
 def bring_to_front():
