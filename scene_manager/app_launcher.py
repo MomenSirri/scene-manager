@@ -1,6 +1,6 @@
 """Open the Scene Manager app (the separate window) from 3ds Max.
 
-The app ships as one zip (app/release/SceneManager-win.zip). It is unpacked once per version into
+The app ships as one zip (app/release/SceneManager-win.zip, or the same file in pieces .001, .002, ...). It is unpacked once per version into
 ~/.scene_manager/app/<stamp>/ and started from there, so later launches are instant. 3ds Max only starts
 the bridge and the app; the app then connects by itself and reconnects when Max restarts.
 """
@@ -22,22 +22,38 @@ def _app_exe():
     custom = config.load().get("app_path")
     if custom and os.path.isfile(custom):
         return custom
-    if not ZIP.is_file():
+    parts = sorted(ZIP.parent.glob(ZIP.name + ".[0-9][0-9][0-9]")) if ZIP.parent.is_dir() else []
+    if not ZIP.is_file() and not parts:
         return None
-    st = ZIP.stat()
     base = config.HOME / "app"
-    target = base / ("%d_%d" % (st.st_mtime_ns // 10**9, st.st_size))
+    if ZIP.is_file():
+        source, st = ZIP, ZIP.stat()
+        stamp = "%d_%d" % (st.st_mtime_ns // 10**9, st.st_size)
+    else:  # delivered in pieces (SceneManager-win.zip.001, .002, ...): joined on first start
+        source = None
+        stamp = "p%d_%d" % (max(p.stat().st_mtime_ns for p in parts) // 10**9, sum(p.stat().st_size for p in parts))
+    target = base / stamp
     exe = target / EXE_NAME
     if not exe.is_file():
         print("Scene Manager: unpacking the app (first start of this version)...")
         tmp = base / (target.name + ".tmp")
         shutil.rmtree(tmp, ignore_errors=True)
-        with zipfile.ZipFile(ZIP) as z:
+        base.mkdir(parents=True, exist_ok=True)
+        joined = None
+        if source is None:
+            joined = source = base / "package.zip"
+            with open(joined, "wb") as out:
+                for part in parts:
+                    with open(part, "rb") as f:
+                        shutil.copyfileobj(f, out)
+        with zipfile.ZipFile(source) as z:
             z.extractall(tmp)
+        if joined is not None:
+            joined.unlink()
         shutil.rmtree(target, ignore_errors=True)
         tmp.rename(target)
         for old in base.iterdir():  # keep only the current version
-            if old != target and old.is_dir():
+            if old != target and old.is_dir() and not old.name.endswith(".tmp"):
                 shutil.rmtree(old, ignore_errors=True)
     return str(exe)
 
