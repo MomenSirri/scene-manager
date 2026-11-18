@@ -107,6 +107,7 @@ function win32() {
     const lib = koffi.load("user32.dll");
     user32 = {
       SetWindowLongPtrW: lib.func("intptr_t SetWindowLongPtrW(intptr_t hWnd, int nIndex, intptr_t dwNewLong)"),
+      GetWindowLongPtrW: lib.func("intptr_t GetWindowLongPtrW(intptr_t hWnd, int nIndex)"),
       GetWindow: lib.func("intptr_t GetWindow(intptr_t hWnd, uint32_t uCmd)"),
       IsWindow: lib.func("int IsWindow(intptr_t hWnd)"),
       IsIconic: lib.func("int IsIconic(intptr_t hWnd)"),
@@ -119,7 +120,7 @@ function win32() {
 }
 const GWLP_HWNDPARENT = -8, GW_OWNER = 4, SWP_BEHIND = 0x0001 | 0x0002 | 0x0010;   // no size, no move, no activate
 let maxHwnd = 0n, maxPid = 0, owned = false, rolled = false, fullBounds = null;   // owned = following 3ds Max
-let followTimer = null, hiddenForMax = false, topNow = null, lastFront = "";
+let topTries = 0, followTimer = null, hiddenForMax = false, topNow = null, lastFront = "";
 
 function hwndArg(argv) {
   const a = (argv || []).find((x) => String(x).startsWith("--max-hwnd="));
@@ -137,6 +138,17 @@ function setTop(on) {
   topNow = on;
   win.setAlwaysOnTop(on);
 }
+// Is the window really in the always-on-top band? Asked from Windows, not remembered: hiding and showing the
+// window (3ds Max minimized and restored) can drop it without telling us.
+function reallyTop(u, me) {
+  try { return (Number(BigInt(u.GetWindowLongPtrW(me, -20)) & 0x8n)) !== 0; } catch (_) { return topNow === true; }
+}
+function forceTop(u, me, why) {
+  log("back above 3ds Max (" + why + ")");
+  topNow = true;
+  win.setAlwaysOnTop(false); win.setAlwaysOnTop(true);
+  try { u.SetWindowPos(me, -1n, 0, 0, 0, 0, SWP_BEHIND); } catch (e) { log("forceTop: " + e.message); }   // HWND_TOPMOST
+}
 function follow() {
   const u = win32();
   if (!u || !win || win.isDestroyed() || !maxHwnd) return;
@@ -144,15 +156,21 @@ function follow() {
     if (!u.IsWindow(maxHwnd)) return;   // 3ds Max is closing; the bridge tells us
     const min = !!u.IsIconic(maxHwnd);
     if (min && !hiddenForMax && win.isVisible()) { hiddenForMax = true; log("3ds Max minimized: hiding"); win.hide(); }
-    else if (!min && hiddenForMax) { hiddenForMax = false; log("3ds Max restored: showing"); win.showInactive(); }
+    else if (!min && hiddenForMax) { hiddenForMax = false; log("3ds Max restored: showing"); win.showInactive(); topNow = null; }
+    if (min) return;
     const front = BigInt(u.GetForegroundWindow() || 0);
     const me = ownHwnd(), pid = front ? pidOf(u, front) : 0;
     const ours = front === me || front === maxHwnd || (pid && (pid === maxPid || pid === process.pid));
     const who = ours ? (front === me ? "app" : "max") : "other";
     if (who !== lastFront) { lastFront = who; log("in front: " + who + (min ? " (max minimized)" : "")); }
-    if (store.onTop === true) return setTop(true);   // pin: above every program
-    if (ours) setTop(true);
-    else if (front && topNow !== false) {   // another program came forward: go behind it, do not cover it
+    if (store.onTop === true || ours) {   // pin (above every program), or 3ds Max / the app is in front
+      if (topNow !== true) setTop(true);
+      if (reallyTop(u, me)) topTries = 0;
+      else if (topTries < 8) { topTries++; forceTop(u, me, who); }   // not endlessly, should Windows refuse
+      return;
+    }
+    topTries = 0;
+    if (front && topNow !== false) {   // another program came forward: go behind it, do not cover it
       setTop(false);
       u.SetWindowPos(me, front, 0, 0, 0, 0, SWP_BEHIND);
     }
