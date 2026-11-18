@@ -66,7 +66,7 @@ export function Chat({ open, onClose }: { open: boolean; onClose: () => void }) 
         parts: m.parts.filter((p) => !("step" in p) || p.step.state !== "run").map((p) =>
           "step" in p && ev.denied?.some((d: any) => d.name === p.step.name) ? { step: { ...p.step, state: "run" as const, note: "waiting for your OK" } } : p) }));
       if (ev.stopped) setMsgs((all) => [...all, { who: "note", parts: [{ text: "Stopped." }] }]);
-      else if (ev.signedOut) setMsgs((all) => [...all, { who: "note", signIn: true, parts: [{ text: "Claude is not signed in on this PC." }] }]);
+      else if (ev.signedOut) setMsgs((all) => [...all, { who: "note", signIn: true, parts: [{ text: "Claude's sign-in on this PC has expired or is missing. Press the button, sign in in the window that opens, then send your message again." }] }]);
       else if (ev.error && ev.text) setMsgs((all) => [...all, { who: "note", parts: [{ text: ev.text }] }]);
     }
   }), []);
@@ -122,7 +122,7 @@ export function Chat({ open, onClose }: { open: boolean; onClose: () => void }) 
                 <button className="btn small" onClick={() => refuse(m)}>Don't</button>
               </div>
             </div>}
-            {m.signIn && <button className="btn primary small" onClick={() => window.sm?.chat("sign-in")}>Sign in to Claude</button>}
+            {m.signIn && <button className="btn primary small" onClick={() => window.sm?.chat("sign-in")}>Sign in again</button>}
             {m.install && <button className="btn small" onClick={() => window.open("https://claude.com/claude-code")}>How to install Claude Code</button>}
           </div>))}
         {busy && <div className="chat-busy"><span /><span /><span /></div>}
