@@ -58,19 +58,35 @@ def _app_exe():
     return str(exe)
 
 
+def _stop_other_builds(exe):
+    """Close a running Scene Manager app that is not this build. Without this the old app keeps answering (one app
+    at a time) and a new build never starts until the user closes the window by hand."""
+    if os.name != "nt":
+        return
+    script = ("Get-Process -Name 'Scene Manager' -ErrorAction SilentlyContinue | "
+              "Where-Object { $_.Path -and $_.Path -ne '%s' } | Stop-Process -Force" % exe.replace("'", "''"))
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], timeout=15,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        print("Scene Manager: could not close an older app window (%s). Close it by hand if the new one does not open." % e)
+
+
 def launch():
     """Start the bridge and the app. Falls back to the panel inside 3ds Max when no app build is present."""
     from .bridge import max_server
     if not max_server.is_running():
         max_server.start()
     from .bridge import commands_app
-    if commands_app.bring_to_front():  # already open: the button brings it back
-        return "already open"
     exe = _app_exe()
+    if exe is not None and commands_app.bring_to_front(exe):  # this build is already open: the button brings it back
+        return "already open"
     if exe is None:
         print("Scene Manager: no app build at %s; opening the panel inside 3ds Max instead." % ZIP)
         from .ui import main_window
         return main_window.show()
+    _stop_other_builds(exe)
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("QT_", "PYTHON"))}  # Max's own Qt/Python settings must not leak in
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     # the app attaches its window to this 3ds Max window (stays above Max, hides and returns with it)

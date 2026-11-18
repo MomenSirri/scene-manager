@@ -13,7 +13,7 @@ GWLP_HWNDPARENT = -8
 GW_OWNER = 4
 SW_SHOW, SW_RESTORE = 5, 9
 
-_app = {"hwnd": 0}
+_app = {"hwnd": 0, "exe": "", "pid": 0}
 
 
 def _user32():
@@ -39,18 +39,23 @@ def max_hwnd():
         return 0
 
 
-def ui_app_attach(hwnd=0, from_max=False):
-    """The app reports its window and gets the 3ds Max main window back. `from_max` is no longer used."""
-    _app["hwnd"] = int(hwnd or 0)
+def ui_app_attach(hwnd=0, from_max=False, exe="", pid=0):
+    """The app reports its window, program file and process, and gets the 3ds Max main window back.
+    `from_max` is no longer used."""
+    _app.update(hwnd=int(hwnd or 0), exe=str(exe or ""), pid=int(pid or 0))
     return {"max_hwnd": str(max_hwnd()), "owned": False}
 
 
-def bring_to_front():
-    """Show the app window that is already open. False when there is none (the caller then starts the app)."""
+def bring_to_front(exe=None):
+    """Show the app window that is already open. False when there is none, or when the open one is another build
+    than `exe` (an app from before the last update): the caller then replaces it."""
+    import os
     u = _user32()
     hwnd = _app["hwnd"]
     if not u or not hwnd or not u.IsWindow(hwnd):
         _app["hwnd"] = 0
+        return False
+    if exe and os.path.normcase(os.path.abspath(_app["exe"] or "?")) != os.path.normcase(os.path.abspath(exe)):
         return False
     from . import max_server
     srv = max_server._server

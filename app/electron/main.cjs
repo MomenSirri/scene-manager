@@ -149,14 +149,31 @@ function forceTop(u, me, why) {
   win.setAlwaysOnTop(false); win.setAlwaysOnTop(true);
   try { u.SetWindowPos(me, -1n, 0, 0, 0, 0, SWP_BEHIND); } catch (e) { log("forceTop: " + e.message); }   // HWND_TOPMOST
 }
+// "Hidden while 3ds Max is minimized" without hiding the window. A real hide makes Windows pick another window to
+// activate, 3ds Max answers that by restoring itself, and Max bounced back up each time it was minimized (seen in
+// the log of a real machine). So the window only becomes invisible, lets clicks through and sinks to the bottom:
+// nothing is activated or deactivated.
+function setGhost(on) {
+  if (!win || win.isDestroyed() || hiddenForMax === on) return;
+  hiddenForMax = on;
+  try {
+    win.setOpacity(on ? 0 : 1);
+    win.setIgnoreMouseEvents(on);
+    if (on) {
+      topNow = false; win.setAlwaysOnTop(false);
+      const u = win32();
+      if (u) u.SetWindowPos(ownHwnd(), 1n, 0, 0, 0, 0, SWP_BEHIND);   // HWND_BOTTOM
+    } else topNow = null;   // the next check puts it back above 3ds Max
+  } catch (e) { log("ghost: " + e.message); }
+}
 function follow() {
   const u = win32();
   if (!u || !win || win.isDestroyed() || !maxHwnd) return;
   try {
     if (!u.IsWindow(maxHwnd)) return;   // 3ds Max is closing; the bridge tells us
     const min = !!u.IsIconic(maxHwnd);
-    if (min && !hiddenForMax && win.isVisible()) { hiddenForMax = true; log("3ds Max minimized: hiding"); win.hide(); }
-    else if (!min && hiddenForMax) { hiddenForMax = false; log("3ds Max restored: showing"); win.showInactive(); topNow = null; }
+    if (min && !hiddenForMax) { log("3ds Max minimized: hiding"); setGhost(true); }
+    else if (!min && hiddenForMax) { log("3ds Max restored: showing"); setGhost(false); }
     if (min) return;
     const front = BigInt(u.GetForegroundWindow() || 0);
     const me = ownHwnd(), pid = front ? pidOf(u, front) : 0;
@@ -189,7 +206,7 @@ function setOwner(hwnd) {
       if (BigInt(u.GetWindow(me, GW_OWNER) || 0)) u.SetWindowLongPtrW(me, GWLP_HWNDPARENT, 0n);
     } catch (e) { log("release owner: " + e.message); }
   }
-  if (hiddenForMax && !owned) { hiddenForMax = false; win.showInactive(); }
+  if (!owned) setGhost(false);
   win.setSkipTaskbar(owned);   // a tool window of 3ds Max: no taskbar button of its own
   if (owned) { followTimer = setInterval(follow, 250); follow(); }
   else setTop(store.onTop !== false);   // not following (or not on Windows): float above everything, as before
@@ -200,7 +217,7 @@ async function attach() {   // after every (re)connect: Max tells us its window,
   if (!win || win.isDestroyed()) return;
   try {
     const me = process.platform === "win32" ? ownHwnd().toString() : "0";
-    const r = await call("ui_app_attach", { hwnd: me });
+    const r = await call("ui_app_attach", { hwnd: me, exe: process.execPath, pid: process.pid });
     setOwner(r && r.max_hwnd ? BigInt(r.max_hwnd) : maxHwnd);
     log("following 3ds Max: " + owned + " (window " + maxHwnd + ", process " + maxPid + ")");
     emit({ event: "window", ...windowState() });
@@ -233,7 +250,7 @@ function setRolled(on) {
 function comeToFront() {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
-  hiddenForMax = false;
+  setGhost(false);
   setRolled(false);
   win.show(); win.focus();
 }
@@ -271,7 +288,6 @@ if (!app.requestSingleInstanceLock()) {
   app.on("second-instance", (_e, argv) => {   // the toolbar button in 3ds Max was pressed again: come to the front
     const h = hwndArg(argv);
     if (h) setOwner(h);
-    hiddenForMax = false;
     comeToFront();
   });
   app.whenReady().then(() => {
