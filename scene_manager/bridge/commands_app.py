@@ -43,7 +43,9 @@ def ui_app_attach(hwnd=0, from_max=False, exe="", pid=0):
     """The app reports its window, program file and process, and gets the 3ds Max main window back.
     `from_max` is no longer used."""
     _app.update(hwnd=int(hwnd or 0), exe=str(exe or ""), pid=int(pid or 0))
-    return {"max_hwnd": str(max_hwnd()), "owned": False}
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent.parent   # the Scene Manager folder: the app runs Claude from it
+    return {"max_hwnd": str(max_hwnd()), "owned": False, "root": str(root)}
 
 
 def bring_to_front(exe=None):

@@ -132,5 +132,18 @@ def run_maxscript(code: str) -> dict:
     return _call("run_maxscript", timeout=600, code=code)
 
 
+def _load_extra_tools():
+    """Load claude_bridge/tools_*.py files. Each defines register(mcp, call) and adds its tools."""
+    import importlib.util
+    for f in sorted(Path(__file__).parent.glob("tools_*.py")):
+        spec = importlib.util.spec_from_file_location("sm_" + f.stem, f)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.register(mcp, _call)
+
+
+_load_extra_tools()
+
+
 if __name__ == "__main__":
     mcp.run()

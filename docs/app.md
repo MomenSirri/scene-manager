@@ -71,3 +71,20 @@ The title bar is not a system title bar (`-webkit-app-region: drag` is not used)
 `main.cjs` `sm:drag` moves the window. Reason: as a system title bar Windows applied its own behaviour to it (shaking it minimizes
 all other windows, 3ds Max included, and the attached app window then disappears with Max). Window events and title bar buttons
 are written to `~/.scene_manager/app.log`.
+
+## Claude chat
+
+Rail button "Claude" opens a drawer on the right (`app/src/Chat.tsx`). Each message runs the user's own Claude Code CLI
+(`app/electron/chat.cjs`): `claude -p --output-format stream-json --include-partial-messages`, message on stdin, `--resume` for
+the following messages. No API key is stored; it uses the account the CLI is signed in with.
+
+| Point | How |
+|---|---|
+| Tools | only this project's 3ds Max MCP server (`--mcp-config ~/.scene_manager/chat_mcp.json --strict-mcp-config --tools ""`), started with the command from `.mcp.json` (default `python`) |
+| Asked first | `delete_setup`, `render_setups`, `run_python`, `run_maxscript`, `create_sun` are "ask" rules in `--settings`; with `--permission-prompts none` the CLI refuses them and lists them in `permission_denials`; the chat shows Allow / Don't and resumes with the tool allowed for one turn |
+| Guidance | repo `CLAUDE.md` (the CLI runs in the Scene Manager folder) + `chat_guide.txt` |
+| Stop | kills the CLI and its tool server (`taskkill /T`) |
+| Not signed in / not installed | message with a "Sign in to Claude" button (opens a terminal with `claude /login`) or an install link |
+
+Tested end to end on Linux (Electron + CLI + MCP server + stand-in 3ds Max): tool steps, the Allow flow and resume. Not yet run on
+Windows: finding `claude.exe` / `claude.cmd`, and `taskkill`.

@@ -4,6 +4,7 @@ import { Board } from "./Board";
 import { Icon } from "./icons";
 import { Menu, MenuItem, MenuState } from "./Menu";
 import { Tree, visibleRows } from "./Tree";
+import { Chat } from "./Chat";
 import type { CardPref, Detail, Schema, State } from "./types";
 
 const TAG_COLORS = ["#ff453a", "#ff9f0a", "#30d158", "#2ad4c4", "#64d2ff", "#0a84ff", "#5e5ce6", "#bf5af2"];
@@ -24,6 +25,7 @@ export function App() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [palette, setPalette] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const [prefs, setPrefsState] = useState<Record<string, CardPref>>({});
   const [order, setOrderState] = useState<string[]>([]);
   const [thumbs, setThumbs] = useState<Record<string, string | null>>({});
@@ -230,7 +232,7 @@ export function App() {
               style={page === "setups" && category === g.key ? { color: g.tint } : undefined}
               onClick={() => { setPage("setups"); setCategory(category === g.key ? null : g.key); }}><Icon name={g.icon} size={20} /></button>))}
           <span className="grow" />
-          <button className={page === "claude" ? "on" : ""} title="Claude" onClick={() => setPage("claude")}><Icon name="claude" size={20} /></button>
+          <button className={chatOpen ? "on" : ""} title="Claude: ask for changes in plain words" onClick={() => setChatOpen(!chatOpen)}><Icon name="claude" size={20} /></button>
           <button className={page === "settings" ? "on" : ""} title="Settings" onClick={() => setPage("settings")}><Icon name="settings" size={20} /></button>
         </nav>
 
@@ -299,13 +301,6 @@ export function App() {
             </div>
             <div className="right"><button className="btn primary" disabled={!queue.length} onClick={() => render(queue.map((q) => q.id))}>Render {queue.length || ""} setup{queue.length === 1 ? "" : "s"}</button></div>
           </section>
-        ) : page === "claude" ? (
-          <section className="page">
-            <h1>Claude</h1>
-            <p className="muted">Open a terminal in the Scene Manager folder and run <b>claude</b>. Ask for changes in plain words, for example “make a Dusk setup in the Street folder, sun low in the west, softer shadows”. Every change is one undo step in 3ds Max.</p>
-            <h2>Recent actions</h2>
-            <div className="log">{[...state.log].reverse().map((l, i) => <div key={i}>{l}</div>)}{!state.log.length && <span className="muted">Nothing yet.</span>}</div>
-          </section>
         ) : (
           <section className="page">
             <h1>Settings</h1>
@@ -316,6 +311,7 @@ export function App() {
             <div><button className="btn" onClick={() => { setPrefs({}); setOrder([]); flash("Card layout reset."); }}>Reset card layout</button></div>
           </section>
         )}
+        <Chat open={chatOpen} onClose={() => setChatOpen(false)} />
       </div>
 
       <footer className="status">

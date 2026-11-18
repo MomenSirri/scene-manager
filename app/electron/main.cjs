@@ -5,6 +5,7 @@ const fs = require("fs");
 const net = require("net");
 const os = require("os");
 const path = require("path");
+const { createChat } = require("./chat.cjs");
 
 const HOME = process.env.SCENE_MANAGER_HOME || path.join(os.homedir(), ".scene_manager");
 const BRIDGE_FILE = path.join(HOME, "bridge.json");
@@ -218,6 +219,7 @@ async function attach() {   // after every (re)connect: Max tells us its window,
   try {
     const me = process.platform === "win32" ? ownHwnd().toString() : "0";
     const r = await call("ui_app_attach", { hwnd: me, exe: process.execPath, pid: process.pid });
+    if (r && r.root) { store.root = r.root; saveStore(); }
     setOwner(r && r.max_hwnd ? BigInt(r.max_hwnd) : maxHwnd);
     log("following 3ds Max: " + owned + " (window " + maxHwnd + ", process " + maxPid + ")");
     emit({ event: "window", ...windowState() });
@@ -292,6 +294,15 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.whenReady().then(() => {
     ipcMain.handle("sm:call", (_e, cmd, args) => call(String(cmd), args || {}));
+    const chat = createChat({ home: HOME, log, emit, getRoot: () => process.env.SCENE_MANAGER_ROOT || store.root || "" });
+    ipcMain.handle("sm:chat", (_e, what, text, allow) => {
+      if (what === "send") return chat.send(String(text || ""), Array.isArray(allow) ? allow.map(String) : []);
+      if (what === "stop") return chat.stop();
+      if (what === "reset") return chat.reset();
+      if (what === "sign-in") return chat.signIn();
+      return chat.status();
+    });
+    app.on("before-quit", () => chat.stop());
     ipcMain.handle("sm:status", () => ({ connected, ...windowState() }));
     ipcMain.handle("sm:store-get", (_e, key) => store[key]);
     ipcMain.handle("sm:store-set", (_e, key, value) => { store[key] = value; saveStore(); });

@@ -7,6 +7,7 @@ declare global {
     sm?: {
       call(cmd: string, args?: object): Promise<any>;
       onEvent(fn: Listener): () => void;
+      chat(what: "send" | "stop" | "reset" | "sign-in" | "status", text?: string, allow?: string[]): Promise<any>;
       status(): Promise<{ connected: boolean; onTop: boolean; owned: boolean; rolled: boolean; attach: boolean }>;
       store: { get(key: string): Promise<any>; set(key: string, value: any): Promise<void> };
       win: { minimize(): void; maximize(): void; close(): void; setOnTop(on: boolean): Promise<boolean>; setAttach(on: boolean): Promise<boolean>; roll(on: boolean): Promise<boolean>; drag(phase: "start" | "move" | "end", x?: number, y?: number): void };

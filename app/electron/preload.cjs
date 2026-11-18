@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("sm", {
     ipcRenderer.on("sm:event", h);
     return () => ipcRenderer.removeListener("sm:event", h);
   },
+  chat: (what, text, allow) => ipcRenderer.invoke("sm:chat", what, text, allow),
   status: () => ipcRenderer.invoke("sm:status"),
   store: {
     get: (key) => ipcRenderer.invoke("sm:store-get", key),
