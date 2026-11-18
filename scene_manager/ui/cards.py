@@ -212,7 +212,7 @@ class _Grip(QtWidgets.QWidget):
         self.card = card
         self.setFixedSize(14, 14)
         self.setCursor(QtCore.Qt.SizeFDiagCursor)
-        self.setToolTip("Drag to resize · double-click to reset")
+        self.setToolTip("Drag to resize (snaps to the dots) · double-click to fit the content again")
         self.dragging = False
         self._start = None
 
@@ -243,6 +243,9 @@ class _Grip(QtWidgets.QWidget):
         if self.dragging:
             self.dragging = False
             self.card.set_size(self.card.fixed_w, self.card.fixed_h, save=True)
+            board = self.card.parentWidget()
+            if hasattr(board, "card_resize_done"):
+                board.card_resize_done()
             if not self.card.underMouse():
                 self.hide()
 
@@ -286,8 +289,9 @@ class ModuleCard(QtWidgets.QFrame):
         self.prefs = card_prefs.get(module.key)
         self.fixed_w = self.prefs.get("w")
         self.fixed_h = self.prefs.get("h")
-        self.col = self.prefs.get("col")  # grid column on the board (None = first free spot)
-        self.slot_col = 0
+        self.gx = self.prefs.get("gx")    # left edge on the board's dot grid, in dots (None = first free spot)
+        self.col = self.prefs.get("col")  # older column-based place, converted by the board
+        self.slot_gx = 0
         # table cards (Layers, Objects, Lights...) start two columns wide, as in SM3
         self.default_span = 2 if any(prop_kinds.is_wide(p.kind) for p in module.props) else 1
         self.collapsed = False
@@ -307,7 +311,7 @@ class ModuleCard(QtWidgets.QFrame):
         hl.setSpacing(L["header_gap"])
         self.head = head
         head.setCursor(QtCore.Qt.OpenHandCursor)
-        head.setToolTip("Drag to move · double-click to fold")
+        head.setToolTip("Drag to move (snaps to the dots) · double-click to fold")
         head.installEventFilter(self)
         badge = QtWidgets.QLabel()
         isz = L["icon_size"]

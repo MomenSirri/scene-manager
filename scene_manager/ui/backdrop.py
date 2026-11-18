@@ -56,16 +56,7 @@ def pixmap(w, h, dpr=1.0, scheme=DEFAULT_SCHEME):
         c3.setAlpha(0)
         g.setColorAt(1, c3)
         p.fillRect(QtCore.QRectF(0, 0, w, h), g)
-    # faint dot grid
-    p.setPen(QtCore.Qt.NoPen)
-    p.setBrush(QtGui.QColor(255, 255, 255, 20))
-    y = DOT_STEP / 2
-    while y < h:
-        x = DOT_STEP / 2
-        while x < w:
-            p.drawEllipse(QtCore.QPointF(x, y), 0.9, 0.9)
-            x += DOT_STEP
-        y += DOT_STEP
+    # no dots here: the card board draws the dot grid its cards snap to (ui/board.py)
     # gentle vignette
     v = QtGui.QRadialGradient(QtCore.QPointF(w / 2, h / 2), big * 0.75)
     v.setColorAt(0.6, QtGui.QColor(0, 0, 0, 0))
