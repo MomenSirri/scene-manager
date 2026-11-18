@@ -10,6 +10,7 @@ from .. import thumbnails
 from ..core import nodes, registry
 from ..core.manager import get_manager
 from ..ui import groups
+from ..core.undo import undo_step
 
 NODE_KINDS = ("camera", "sunlight", "light")
 
@@ -271,7 +272,7 @@ def ui_baseline(action):
     if action == "capture":
         return {"modules": mgr.capture_baseline()}
     if action == "restore":
-        with pymxs.undo(True, "Scene Manager: restore baseline"):
+        with undo_step("Scene Manager: restore baseline"):
             return {"errors": mgr.restore_baseline()}
     mgr.clear_baseline()
     return {"ok": True}

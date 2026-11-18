@@ -13,8 +13,8 @@ Determinism: before applying, objects changed by the previous setup are put back
 baseline (Setups menu > Capture scene baseline) the original state of every rule target is
 stored in the .max; without it the module remembers the state for this 3ds Max session only.
 
-Node properties (CHECK IN MAX, all standard INode properties): isHidden, renderable, xray,
-castShadows, primaryVisibility, secondaryVisibility, isFrozen. Named selection sets:
+Node properties (all standard INode properties): isNodeHidden, renderable, xray,
+castShadows, primaryVisibility, secondaryVisibility, isNodeFrozen. Named selection sets:
 getNumNamedSelSets(), getNamedSelSetName(i), getNamedSelSetItemCount(i), getNamedSelSetItem(i, j) (1-based).
 """
 import fnmatch
@@ -36,14 +36,17 @@ COLUMNS = [
     Prop("frozen", "Frozen", "tristate"),
 ]
 # column -> (node property, inverted)
+# isNodeHidden / isNodeFrozen are the node's own flags. isHidden / isFrozen also read true when the
+# node's LAYER is hidden/frozen, and setting them false turns the whole layer back on, which undid
+# the Layers module (checked in Max 2026).
 _PROPS = {
-    "visible": ("isHidden", True),
+    "visible": ("isNodeHidden", True),
     "renderable": ("renderable", False),
     "camera": ("primaryVisibility", False),
     "reflections": ("secondaryVisibility", False),
     "cast_shadows": ("castShadows", False),
     "see_through": ("xray", False),
-    "frozen": ("isFrozen", False),
+    "frozen": ("isNodeFrozen", False),
 }
 PRECEDENCE = {"pattern": 0, "layer": 1, "set": 2, "node": 3}
 

@@ -110,6 +110,23 @@ class RenderElementsModule(Module):
         if missing:
             raise RuntimeError("not in the scene: %s" % ", ".join(sorted(missing)))
 
+    def differs(self, values, scene):
+        """Paths: token templates compare as patterns; a V-Ray channels/raw path does not count while
+        its switch is off; element_path is checked against each element's file name."""
+        vals = {k: v for k, v in values.items() if k != "element_path"}
+        for k, flag in (("vray_split_path", "vray_split"), ("vray_raw_path", "vray_raw")):
+            if not values.get(flag, scene.get(flag)) or tokens.matches(values.get(k), scene.get(k)):
+                vals.pop(k, None)
+        out = super().differs(vals, scene)
+        template = (values.get("element_path") or "").strip()
+        if template:
+            re_ = manager()
+            for i, el in elements():
+                if not tokens.matches(template, str(re_.GetRenderElementFilename(i) or "")):
+                    out.add("element_path")
+                    break
+        return out
+
     def summary(self, values):
         els = values.get("elements") or {}
         if values.get("active") is False:

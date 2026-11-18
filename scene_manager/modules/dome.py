@@ -11,6 +11,9 @@ from ..core.registry import register
 from ..env import renderers
 
 
+DOME_CLASS = {"vray": "vraylight", "arnold": "arnold_light"}
+
+
 @register
 class DomeModule(Module):
     key = "dome"
@@ -32,8 +35,11 @@ class DomeModule(Module):
         domes = renderers.list_domes()
         if not domes:
             return {"light": None}
-        on = [d for d in domes if not rt.isProperty(d, rt.Name("on")) or d.on]
-        node = (on or domes)[0]
+        # prefer a dome of the current renderer (a V-Ray dome means nothing to Arnold), then one that is on
+        kind = DOME_CLASS.get(renderers.renderer())
+        domes = sorted(domes, key=lambda d: (renderers.class_name(d).lower() != kind,
+                                             rt.isProperty(d, rt.Name("on")) and not d.on))
+        node = domes[0]
         out = {"light": nodes.ref(node)}
         out.update(renderers.dome_read(node))
         return out

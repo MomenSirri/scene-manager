@@ -37,7 +37,9 @@ HDRI_MAPTYPE = ["mapType"]                                         # VRayBitmap 
 
 LIGHT_MULT = ["multiplier", "intensity"]
 LIGHT_TEX = ["texmap"]
-LIGHT_TEX_ON = ["texmap_on", "use_texmap"]
+LIGHT_TEX_ON = ["texmap_on", "use_texmap", "useTexmap"]   # V-Ray, ?, Arnold_Light
+ARNOLD_SHAPE = ["shapeType", "type"]
+ARNOLD_SKYDOME = 6
 
 
 def renderer():
@@ -270,7 +272,9 @@ def is_dome(node):
     if c == "vraylight":
         return int(get(node, ["type"], -1)) == 1           # 0 plane, 1 dome, 2 sphere, 3 mesh, 4 disc
     if c == "arnold_light":
-        return int(get(node, ["type"], -1)) == 6           # CHECK: skydome index in MAXtoA
+        # MAXtoA names it shapeType (there is no "type"): 0 point, 1 distant, 2 spot, 3 quad, 4 disc,
+        # 5 cylinder, 6 skydome, ... (CHECK the skydome index in your MAXtoA version)
+        return int(get(node, ARNOLD_SHAPE, -1)) == ARNOLD_SKYDOME
     return "dome" in str(node.name).lower()
 
 
@@ -284,8 +288,8 @@ def create_dome(name="SM Dome"):
         n = rt.VRayLight()
         n.type = 1
     elif r == "arnold":
-        n = rt.Arnold_Light()                                # CHECK
-        n.type = 6                                           # CHECK
+        n = rt.Arnold_Light()
+        put(n, ARNOLD_SHAPE, ARNOLD_SKYDOME)
     elif r == "corona":
         raise RuntimeError("Corona has no dome light: use the Environment module with an HDRI instead.")
     else:
@@ -297,6 +301,8 @@ def create_dome(name="SM Dome"):
 
 def dome_read(node):
     tex = get(node, LIGHT_TEX)
+    if tex is not None and get(node, LIGHT_TEX_ON, True) is False:
+        tex = None  # map present but switched off: no HDRI
     info = read_hdri(tex) if tex is not None else None
     vis = None
     if has(node, "invisible"):
@@ -321,6 +327,12 @@ def dome_write(node, values):
         tex = make_hdri("hdri:dome:%s" % node.name, values["hdri"], 0.0, 1.0)
         put(node, LIGHT_TEX, tex)
         put(node, LIGHT_TEX_ON, True)
+    elif "hdri" in values:
+        # setup stores "no HDRI": switch an HDRI map off (kept on the light). A non-HDRI map
+        # (procedural, colour) is not something this module captured, so it is left alone.
+        tex = get(node, LIGHT_TEX)
+        if tex is not None and read_hdri(tex) is not None:
+            put(node, LIGHT_TEX_ON, False)
     if values.get("rotation") is not None:
         if abs(mapstore.get_z_rotation(node) - float(values["rotation"]) % 360.0) > 0.01:
             mapstore.set_z_rotation(node, float(values["rotation"]))

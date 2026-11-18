@@ -162,7 +162,7 @@ class ArnoldSettings(RendererSettings):
         RProp("camera_aa", "Camera (AA) samples", "int", ["AA_samples", "aa_samples"], minimum=-3, maximum=100),
         RProp("adaptive", "Adaptive sampling", "bool", ["enable_adaptive_sampling", "adaptive_sampling"]),
         RProp("aa_max", "Max camera samples", "int", ["AA_samples_max", "aa_samples_max"], minimum=0, maximum=100),
-        RProp("adaptive_threshold", "Adaptive threshold", "float", ["AA_adaptive_threshold", "aa_adaptive_threshold"],
+        RProp("adaptive_threshold", "Adaptive threshold", "float", ["adaptive_threshold", "AA_adaptive_threshold", "aa_adaptive_threshold"],
               minimum=0, maximum=1, decimals=3, step=0.005),
         RProp("diffuse", "Diffuse samples", "int", ["GI_diffuse_samples", "gi_diffuse_samples"], minimum=0, maximum=100),
         RProp("specular", "Specular samples", "int", ["GI_specular_samples", "gi_specular_samples"], minimum=0, maximum=100),

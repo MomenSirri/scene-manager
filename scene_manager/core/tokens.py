@@ -92,3 +92,13 @@ def version_text(template, context):
         if m:
             found = max(found, int(m.group(1)))
     return str(found + 1).zfill(pad)
+
+
+def matches(template, value):
+    """True if `value` could be `template` with its {tokens} resolved (each token matches any text).
+    Used by differs(): token paths are stored unresolved but read back from the scene resolved."""
+    template, value = template or "", value or ""
+    if "{" not in template:
+        return os.path.normcase(template) == os.path.normcase(value)
+    rx = "(?s)" + ".*".join(re.escape(p) for p in re.split(r"\{[^{}]*\}", template))
+    return re.fullmatch(rx, value, flags=re.IGNORECASE) is not None

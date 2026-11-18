@@ -11,6 +11,7 @@ from ..core import nodes, registry, tokens
 from ..core.manager import get_manager
 from ..modules import sun as sun_mod
 from ..render import batch
+from ..core.undo import undo_step
 
 # Recent Claude actions, shown in the panel's Claude page.
 LOG = []
@@ -201,7 +202,7 @@ def set_sun_direction(azimuth, elevation, sun_name=None, distance=None):
         if not suns:
             raise RuntimeError("No sun light found. Pass sun_name.")
         sun = suns[0]
-    with pymxs.undo(True, "Claude: sun direction"):
+    with undo_step("Claude: sun direction"):
         sun_mod.set_direction(sun, float(azimuth), float(elevation), distance)
     rt.redrawViews()
     log("Sun %s -> azimuth %.1f, elevation %.1f" % (sun.name, azimuth, elevation))
@@ -212,7 +213,7 @@ def run_python(code):
     """Run Python in 3ds Max. Globals: rt, pymxs, sm (setup manager). Set `result` to return data."""
     g = {"rt": rt, "pymxs": pymxs, "sm": get_manager(), "result": None, "__name__": "__claude__"}
     out = io.StringIO()
-    with contextlib.redirect_stdout(out), pymxs.undo(True, "Claude"):
+    with contextlib.redirect_stdout(out), undo_step("Claude"):
         exec(compile(code, "<claude>", "exec"), g)
     rt.redrawViews()
     first = code.strip().splitlines()[0] if code.strip() else ""
@@ -221,7 +222,7 @@ def run_python(code):
 
 
 def run_maxscript(code):
-    with pymxs.undo(True, "Claude"):
+    with undo_step("Claude"):
         r = rt.execute(code)
     rt.redrawViews()
     log("MAXScript: %s" % code.strip()[:80])

@@ -20,6 +20,7 @@ INTENSITY_PROPS = ["intensity_multiplier", "intensity", "multiplier"]   # VRaySu
 SIZE_PROPS = ["size_multiplier", "sizeMultiplier", "size"]               # VRaySun, CoronaSun (check), generic
 SHADOW_PROPS = ["shadows", "castShadows", "cast_shadows"]                 # CHECK per renderer
 POSITION_MODES = ["angles", "date_time"]
+MOVABLE_CONTROLLERS = ("prs", "lookat")
 USER_PROP = "sm_sun_position"   # date/time/location written on the sun node, so capture can read it back
 LOCATION_KEYS = ("date", "time", "latitude", "longitude", "utc_offset", "north")
 LOCATION_DEFAULTS = {"date": "2026-06-21", "time": "12:00", "latitude": 51.51, "longitude": -0.13,
@@ -84,7 +85,9 @@ def get_direction(sun):
 def set_direction(sun, azimuth, elevation, distance=None):
     """Azimuth 0 = north (+Y), 90 = east (+X). Elevation 0 = horizon, 90 = overhead."""
     ctrl = str(rt.classOf(sun.controller)).lower() if sun.controller is not None else ""
-    if ctrl and ctrl != "prs":
+    # prs = free sun, lookat = targeted sun (how V-Ray/Corona suns are normally created). Anything
+    # else (Daylight slave controller, Sun Positioner) belongs to a system we must not fight.
+    if ctrl and ctrl not in MOVABLE_CONTROLLERS:
         raise RuntimeError("%s is driven by %s (Daylight system or Sun Positioner). Change that system instead."
                            % (sun.name, ctrl))
     c, _ = _center(sun)

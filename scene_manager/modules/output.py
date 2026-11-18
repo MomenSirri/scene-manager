@@ -45,6 +45,14 @@ class OutputModule(Module):
         rt.rendOutputFilename = path
         rt.rendSaveFile = bool(values.get("save_file")) and bool(path)
 
+    def differs(self, values, scene):
+        """A path with tokens is stored unresolved and applied resolved, so compare it as a pattern
+        (each {token} matches any text) instead of flagging every token path as changed."""
+        out = super().differs(values, scene)
+        if "path" in out and tokens.matches(values.get("path"), scene.get("path")):
+            out.discard("path")
+        return out
+
     def summary(self, values):
         if "width" in values and "height" in values:
             return "%sx%s" % (values["width"], values["height"])

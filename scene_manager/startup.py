@@ -102,6 +102,11 @@ def _on_scene_changed():
     _busy(False)
     from .core.manager import get_manager
     get_manager().reload()
+    try:
+        from .modules import camera
+        camera.sync_guards()
+    except Exception as e:
+        print("Scene Manager: camera lock guard not restored: %s" % e)
 
 
 def _on_scene_edited():

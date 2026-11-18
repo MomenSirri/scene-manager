@@ -13,13 +13,14 @@ from ..core.manager import get_manager
 from ..env import hdri, renderers, solar
 from ..modules import sun as sun_mod
 from .commands import log
+from ..core.undo import undo_step
 
 
 def _apply_module(key, given, setup=None, undo_label="Claude"):
     """Merge `given` over the scene values, apply, and optionally store `given` on a setup."""
     m = registry.get(key)
     given = {k: v for k, v in given.items() if v is not None}
-    with pymxs.undo(True, undo_label):
+    with undo_step(undo_label):
         values = m.capture()
         values.update(given)
         m.apply(values, tokens.base_context())
@@ -80,7 +81,7 @@ def set_sun(azimuth=None, elevation=None, date=None, time=None, latitude=None, l
 
 def create_sun(name="SM Sun", with_sky=True):
     """Create a renderer sun (V-Ray Sun / Corona Sun) and, if with_sky, put the matching sky in the Environment slot."""
-    with pymxs.undo(True, "Claude: create sun"):
+    with undo_step("Claude: create sun"):
         n = renderers.create_sun(name)
         if with_sky:
             from ..modules import environment
@@ -122,7 +123,7 @@ def set_dome(hdri_path=None, rotation=None, intensity=None, on=None, visible=Non
     elif not renderers.list_domes():
         if not create:
             raise RuntimeError("No dome light in the scene. Pass create=True to make one.")
-        with pymxs.undo(True, "Claude: create dome"):
+        with undo_step("Claude: create dome"):
             ref = nodes.ref(renderers.create_dome())
     after = _apply_module("dome", {"light": ref, "hdri": hdri_path, "rotation": rotation, "intensity": intensity,
                                    "on": on, "visible": visible}, setup, "Claude: dome")

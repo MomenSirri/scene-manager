@@ -15,6 +15,7 @@ import uuid
 from pymxs import runtime as rt
 
 from . import nodes, registry, storage, tokens
+from .undo import undo_step
 
 _instance = None
 
@@ -374,8 +375,7 @@ class SetupManager:
         undo: label of one undo step for the scene changes (the panel passes it; batch render does not).
         Render settings and the environment are not undoable in 3ds Max; nodes, lights and layers are."""
         if undo:
-            import pymxs
-            with pymxs.undo(True, undo):
+            with undo_step(undo):
                 return self._apply(key, only)
         return self._apply(key, only)
 

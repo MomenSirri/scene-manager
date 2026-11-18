@@ -12,6 +12,7 @@ from ..core.registry import register
 MODES = {"single": 1, "active": 2, "range": 3, "frames": 4}  # rendTimeType values
 MODE_BY_VALUE = {v: k for k, v in MODES.items()}
 CAMERA_MODE = "camera"
+MODE_PROPS = {"single": ("frame",), "active": (), "range": ("start", "end", "nth"), "frames": ("frames",)}
 
 _KEY_RANGE_MXS = r"""
 global SM_collectKeys
@@ -109,7 +110,10 @@ class TimeModule(Module):
             r = camera_key_range()
             want = {"mode": "range", "start": r[0], "end": r[1]} if r else {"mode": "single"}
             return {"mode"} if any(scene.get(k) != v for k, v in want.items()) else set()
-        return super().differs(values, scene)
+        # only the values the stored mode uses: a single-frame setup is not "changed" because the
+        # scene's range start/end differ (they were left by another setup and are not rendered)
+        used = {"mode"} | set(MODE_PROPS.get(values.get("mode") or scene.get("mode"), ()))
+        return super().differs({k: v for k, v in values.items() if k in used}, scene)
 
     def actions(self):
         def from_camera(v):

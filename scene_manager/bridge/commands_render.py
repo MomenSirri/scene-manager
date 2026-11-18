@@ -6,6 +6,7 @@ from ..core import registry
 from ..core.manager import get_manager
 from ..modules import custom_props, lightmix, render_elements, render_override, render_preset
 from ..render import rprops
+from ..core.undo import undo_step
 
 
 def _log(text):
@@ -49,7 +50,7 @@ def set_render_props(values):
     """Set renderer properties in the scene now (not stored in a setup). One undo step."""
     r = rprops.current()
     done, missing = {}, []
-    with pymxs.undo(True, "Claude: render settings"):
+    with undo_step("Claude: render settings"):
         for p, v in values.items():
             old = rprops.read(r, [p])
             if rprops.write(r, [p], v) is None:
