@@ -216,7 +216,7 @@ Group colours are the 2.x ones. "v3" marks things seen only in the beta.
 | Property lists inside Render Settings (V-Ray, FStorm), Lights, Color corrections, Materials | Module content |
 | Full token list, what Draft and Full change | Output and quality |
 
-These can only be answered by watching the plugin run. That is allowed under the project rules if Momen installs the 3 beta himself (Pulze account, 30-day trial; note the installer removes 2.x). I would then only look at its panel in 3ds Max and click through it: no reading of its files, scripts or licence.
+Most of these are now answered in section 12. They could only be answered by watching the plugin run. That is allowed under the project rules if Momen installs the 3 beta himself (Pulze account, 30-day trial; note the installer removes 2.x). I would then only look at its panel in 3ds Max and click through it: no reading of its files, scripts or licence.
 
 ## 10. Our repo against this spec
 
@@ -265,6 +265,122 @@ State of our code (`/mnt/project-files/scene-manager`, same as `F:\scene-manager
 | 13 | Compare setups; region per setup; per-element extension; resolution presets | Nice to have |
 | 14 | Comments with Claude replies | Large; our bridge already covers the Claude part |
 | 15 | Chaos Vantage | Last |
+
+## 12. Observed in the running 3 beta (3.0.1.388, Momen's PC, 2026-11-18)
+
+Watched and clicked the panel only. Test scene: V-Ray, two VRayLights, a VRaySun, a camera and two objects. Where this section disagrees with sections 1 to 9, this section wins.
+
+### 12.1 Window and canvas
+
+| Topic | What it does |
+|---|---|
+| Window | Its own program window ("Scene Manager 3.0.1.388-beta") with a dark title bar and normal minimise / maximise / close. It floats above 3ds Max and stays on top while you work in Max. It does not dock into Max |
+| Settings | A second, separate window |
+| Card area | A dotted canvas with a fixed grid of columns. Cards have a fixed column width; table cards (Layers, Objects, Lights, Atmosphere, Script) are two columns wide |
+| Resizing the window | Cards do not move or reflow. A smaller window just shows scroll bars (vertical and horizontal). Maximised on a 3440 px screen the cards still sit in two columns on the left with empty canvas to the right |
+| Drag a card | Grab anywhere on the header (tooltip: "Drag to move · double-click to fold"). A teal dashed box shows where it will land, snapped to a grid column. On drop the card rises to the top of that column; the other cards close the gap |
+| Resize a card | Small teal corner mark at the bottom-right on hover. Drag for any width and height. Labels stay left, controls stay right at their fixed width |
+| Fold | Double-click the header, or gear > Fold. Only the header row stays; cards below move up |
+| New module | Lands in the first free spot, switched on |
+
+### 12.2 Card gear menu
+
+Rename field, nine colour dots (cyan, blue, violet, magenta, pink, orange, yellow, lime, green), Add a property (only on cards that take properties), Fold, Reset size, Copy values (Ctrl+C), Paste values (Ctrl+V), Remove (red).
+
+### 12.3 Header and setup list
+
+| Control | Tooltip / behaviour |
+|---|---|
+| Lightning | "Apply on select: on". Toggle: clicking a setup activates it |
+| Viewfinder | "One setup per camera" |
+| Wand | "Setup from scene" |
+| Sliders (setup header) | "Quality levels" |
+| Disk (setup header) | "Save output" toggle |
+| Boxed + (setup header) | "Add a module" |
+| Right-click a setup | Activate (Enter), Add to batch, Rename (F2), Color >, Thumbnail >, Duplicate (Ctrl+D), Move to folder >, Delete (Del) |
+
+### 12.4 Add a module menu
+
+A drop-down list in groups. Items already on the board are dimmed. Items the current renderer cannot use are dimmed with a tooltip, e.g. "Needs V-Ray: the scene renders with Arnold".
+
+| Group | Modules |
+|---|---|
+| View | Camera, Resolution, Frames, Region |
+| Light and sky | Sun, Dome, Environment, Lights, Atmosphere |
+| Scene | Layers, Objects, Xrefs, Viewport |
+| Render | Output, Render elements, Render settings, Color corrections, LightMix |
+| Custom | Custom, Script |
+| Notes | Notes, To-do, Comments, Tags, Prompt |
+
+A new setup starts with Camera, Frames, Environment, Resolution, Sun, Output, Layers, Objects. With Arnold: Dome, Render settings, Color corrections and LightMix are unavailable.
+
+### 12.5 Property rows and tables
+
+| Thing | Behaviour |
+|---|---|
+| Row dot | Filled = a value is stored. Hollow = the property is listed but nothing is stored, so the scene is left alone; the control shows a dash |
+| Tick boxes | Three states: on, off, dash (not set) |
+| Disabled card | Whole card dimmed; empty tables show grey placeholder bars |
+| Table cards | "+ Add" at the bottom offers "Selected in 3ds Max". Magnifier in the header opens an inline search. Rows are grouped by object class with a count ("VRayLight 2"), group can fold and sort |
+| Add a property | Popover with search. Lists every property with its current value; a tick marks the ones already shown. Tooltip gives the internal property name |
+
+### 12.6 Module contents seen
+
+| Module | Contents |
+|---|---|
+| Camera | Camera dropdown ("No cameras in the scene" when empty), select button, Locked |
+| Frames | Type, Start, End, Every, Timeline |
+| Resolution | Width, Height, Image aspect (lock), Scale; presets icon in the header. Presets live in Settings > Library: HD 1920x1080, 4K UHD 3840x2160, Square 2000x2000, Portrait 4:5 1080x1350, A3 landscape 300 dpi 4961x3508 |
+| Sun | Sun dropdown ("Choose a sun"), select button, Mode (Free shown; Time & place in the blog), Azimuth, Altitude |
+| Environment | Use map, Map slot ("None / No map") |
+| Dome | Dome dropdown ("Choose a dome"), select button |
+| Lights | Columns On, Intensity, Color by default. Add a property lists the light's whole property set: Azimuth, Altitude, Enabled, Multiplier, Color, Temperature, Double sided, Shadow bias, Affect atmospherics / diffuse / reflections / specular, contributions, Color mode, Cutoff threshold, Decay near/far, Dome options, Invisible to camera, include / exclude lists, Light distribution, No decay, Units, Size0, Size1 and more |
+| Render settings | Starts empty with "+ Add a property". The list is the renderer's full settings grouped like Render Setup rollouts: Frame buffer, Global switches, IPR options, Image sampler (antialiasing), Bucket image sampler and so on. No curated short list |
+| Color corrections | Refresh button; tree of V-Ray frame buffer layers with a tick each (Stamp, Display Correction) |
+| LightMix | Empty state: "Add a LightMix element, render once, then refresh" |
+| Render elements | Empty state: "Add them in Render Setup, then refresh" |
+| Region | "Viewport" field ("Not set") with a fetch button |
+| Viewport | Background, Image (browse), Style, Edged faces, Safe frame, Grid, Lighting, Shadows, Ambient occlusion, Quality |
+| Output | Save file, Root folder (browse), path preview with +, Format |
+| Custom | Empty with "+ Add a property" |
+| Script | Stage dropdown ("Post setup" shown), run / format / open buttons, "Type or browse your Python script" with Type and Browse. Python, not MAXScript |
+| Notes, To-do, Tags, Prompt | "Write a note"; "+ Add an item"; "+ Add a tag"; free text prompt (used for the image-model brief) |
+
+### 12.7 Quality levels
+
+A small grid. Columns are levels (Draft, Full, + adds a level). Rows are properties ("+ Add" adds one). Default single row: Resolution > Scale, Draft 25 %, Full 100 %. So a quality level is a named set of overrides laid over the active setup.
+
+### 12.8 Settings window
+
+| Page | Contents |
+|---|---|
+| Appearance | Theme: Dark, Light, System |
+| Notifications | File loaded: show in the status bar if the scene contains setups |
+| Switching | Update viewport: Active viewport, 3D views only, View to render. Redraw viewport. Restart Corona IR. Sync V-Ray IPR size |
+| Library | HDRI folders (add a folder). Resolution presets |
+| Storage | Size of setups and comments, images, unused images saved in the scene |
+| Assistants, Updates | AI client connections; updater |
+
+### 12.9 Variations view
+
+Empty state: "No sets yet. A set is one product: its properties make every variation." with a New set button.
+
+### 12.10 Still not seen
+
+Output token list (the + in the path row), Sun in Time & place mode, the Objects and Layers columns with rows, folder inheritance display, batch render progress, comments. These need a real scene with a saved setup or two.
+
+### 12.11 What this changes for our build
+
+| Finding | Consequence |
+|---|---|
+| Not docked: a floating always-on-top window | We do not need Max docking to match the original. A plain top-level tool window parented to Max is enough and avoids dock resize problems |
+| Cards never reflow on window resize | Rebuilding cards on every resize is unnecessary. Keep positions fixed and let the area scroll |
+| Grid with drop placeholder and upward packing | Replace free masonry with: fixed column grid, dashed drop target, pack upward in the column |
+| Whole header drags; double-click folds; gear holds Fold / Reset size / Copy / Paste / Remove | No tiny collapse arrow needed |
+| Modules come from a grouped menu, dimmed with a reason when unavailable | If we keep the left rail for modules (Momen's wish), use the same six groups and the same dimming with a tooltip |
+| Render settings and Lights are generic "add any property" lists | Our Custom properties engine can drive both; the curated lists become defaults, not limits |
+| Hollow dot = listed but not stored | Same idea as our override ticks; a dot is lighter than a tick box |
+| Quality levels = override columns | Small feature on top of our override model |
 
 ## Sources
 
