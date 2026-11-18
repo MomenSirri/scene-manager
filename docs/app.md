@@ -1,0 +1,37 @@
+# Scene Manager app (separate window)
+
+The UI is a separate Electron app, like the Scene Manager 3 beta; 3ds Max keeps the Python core and modules.
+
+```
+3ds Max                                   Scene Manager.exe (Electron)
+ scene_manager/core, modules               electron/main.cjs   window, socket to Max, saved layout
+ bridge/max_server.py  127.0.0.1 + token   electron/preload.cjs  the only API the page gets
+ bridge/commands_ui.py ui_* commands  <->  src/  React UI (App, Tree, Board, fields)
+        pushes {"event": "changed"}         asks ui_state / ui_item again and redraws what changed
+```
+
+- 3ds Max is the single source of truth. The app stores only its own look (card places, sizes, colours,
+  folded folders) in `~/.scene_manager/app_ui.json`.
+- Same bridge as Claude Code uses, so both see the same commands and changes from Claude show up live.
+- Edits on the active setup go to the scene at once, each as one undo step in Max.
+
+## Run it
+| Goal | How |
+|---|---|
+| Open from Max | Scripting > Run Script > `open_app.py` (or run `install_scene_manager.ms` once for a toolbar button) |
+| First start | the zip `app/release/SceneManager-win.zip` is unpacked once to `~/.scene_manager/app/`, then started |
+| Work on the UI without Max | `python tools/dev_backend.py`, then in `app/`: `npm install`, `npm run dev`, open http://127.0.0.1:5173 |
+| Rebuild the app | in `app/`: `npm run build`, `npx electron-builder --win dir --x64`, zip `release/win-unpacked` as `SceneManager-win.zip` |
+
+## The board
+Dots every 18 px. A card's left edge, width and height are whole dots; a new card is as tall as its module's
+rows. Drag a header or the teal corner: a glowing box and lit dots show exactly where the card lands. Cards
+keep their left edge and pack upward. Double-click the corner to fit the content again.
+
+## Status
+| Done | Not yet (phase 3) |
+|---|---|
+| setups list (search, tags, drag to move, rename, colours, keys), cards for every module, tables (lights, layers, objects), to-do, notes, add-module palette, render queue, Claude log, always on top | HDRI browser, file pickers, render progress, editors for toggles / light mix / custom properties (shown read-only), card layout tokens, import/export presets, repair missing nodes |
+
+Tests without Max: `python -m tests.test_bridge_events` (protocol), `python -m tests.test_ui` (Qt panel).
+Not yet run against real 3ds Max.
