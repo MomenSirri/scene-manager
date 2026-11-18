@@ -35,3 +35,21 @@ keep their left edge and pack upward. Double-click the corner to fit the content
 
 Tests without Max: `python -m tests.test_bridge_events` (protocol), `python -m tests.test_ui` (Qt panel).
 Not yet run against real 3ds Max.
+
+## Attached to 3ds Max
+
+The app window is an owned window of the 3ds Max main window (Win32 `GWLP_HWNDPARENT`).
+
+| Behaviour | How |
+|---|---|
+| Stays above 3ds Max, not above other programs | owner set in `app/electron/main.cjs` `setOwner()` (koffi, user32) |
+| Hides when Max is minimized, returns with it | done by Windows for owned windows |
+| Minimize button | rolls the window up to its title bar in place (`setRolled`), it never goes to the taskbar |
+| Toolbar button while the app is open | `commands_app.bring_to_front()` shows it, unrolls it and gives it focus |
+| Pin button | above all programs (off by default) |
+| Settings > Attach this window to 3ds Max | off = free window that floats above everything, as before |
+
+Handshake: after each connect the app calls `ui_app_attach(hwnd)` and gets the Max window handle back
+(`rt.windows.getMAXHWND()`); the launcher also passes it as `--max-hwnd=`. If the app cannot set the owner itself,
+3ds Max tries (`from_max=True`). The window has no taskbar button while attached. While 3ds Max is busy
+(rendering, loading) an attached window can be slow to react, because Windows links the two windows' input.

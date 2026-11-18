@@ -18,5 +18,7 @@ contextBridge.exposeInMainWorld("sm", {
     maximize: () => ipcRenderer.send("sm:win", "maximize"),
     close: () => ipcRenderer.send("sm:win", "close"),
     setOnTop: (on) => ipcRenderer.invoke("sm:on-top", !!on),
+    setAttach: (on) => ipcRenderer.invoke("sm:attach", !!on),
+    roll: (on) => ipcRenderer.invoke("sm:roll", !!on),
   },
 });

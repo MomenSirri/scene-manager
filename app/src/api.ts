@@ -1,15 +1,15 @@
 // One way to talk to 3ds Max, whether the page runs in the Electron app (window.sm, a local socket to Max)
 // or in a browser during development (HTTP to tools/dev_backend.py).
-type Listener = (ev: { event: string }) => void;
+type Listener = (ev: { event: string; [k: string]: any }) => void;
 
 declare global {
   interface Window {
     sm?: {
       call(cmd: string, args?: object): Promise<any>;
       onEvent(fn: Listener): () => void;
-      status(): Promise<{ connected: boolean; onTop: boolean }>;
+      status(): Promise<{ connected: boolean; onTop: boolean; owned: boolean; rolled: boolean; attach: boolean }>;
       store: { get(key: string): Promise<any>; set(key: string, value: any): Promise<void> };
-      win: { minimize(): void; maximize(): void; close(): void; setOnTop(on: boolean): Promise<boolean> };
+      win: { minimize(): void; maximize(): void; close(): void; setOnTop(on: boolean): Promise<boolean>; setAttach(on: boolean): Promise<boolean>; roll(on: boolean): Promise<boolean> };
     };
   }
 }

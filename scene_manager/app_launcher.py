@@ -63,6 +63,9 @@ def launch():
     from .bridge import max_server
     if not max_server.is_running():
         max_server.start()
+    from .bridge import commands_app
+    if commands_app.bring_to_front():  # already open: the button brings it back
+        return "already open"
     exe = _app_exe()
     if exe is None:
         print("Scene Manager: no app build at %s; opening the panel inside 3ds Max instead." % ZIP)
@@ -70,5 +73,6 @@ def launch():
         return main_window.show()
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("QT_", "PYTHON"))}  # Max's own Qt/Python settings must not leak in
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    subprocess.Popen([exe], cwd=os.path.dirname(exe), env=env, close_fds=True, creationflags=flags)
+    # the app attaches its window to this 3ds Max window (stays above Max, hides and returns with it)
+    subprocess.Popen([exe, "--max-hwnd=%d" % commands_app.max_hwnd()], cwd=os.path.dirname(exe), env=env, close_fds=True, creationflags=flags)
     return exe

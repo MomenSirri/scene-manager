@@ -28,7 +28,8 @@ export function App() {
   const [order, setOrderState] = useState<string[]>([]);
   const [thumbs, setThumbs] = useState<Record<string, string | null>>({});
   const [message, setMessage] = useState("");
-  const [onTop, setOnTop] = useState(true);
+  const [onTop, setOnTop] = useState(false);
+  const [wnd, setWnd] = useState({ owned: false, rolled: false, attach: true });
   const [queue, setQueue] = useState<any[]>([]);
   const [busy, setBusy] = useState("");
   const selRef = useRef(selected); selRef.current = selected;
@@ -67,6 +68,7 @@ export function App() {
       if (ev.event === "connected") boot();
       else if (ev.event === "disconnected" || ev.event === "closing") setOnline(false);
       else if (ev.event === "changed") soon();
+      else if (ev.event === "window") { setWnd({ owned: !!ev.owned, rolled: !!ev.rolled, attach: ev.attach !== false }); setOnTop(!!ev.onTop); }
     });
     const retry = inApp ? 0 : window.setInterval(() => { if (!document.hidden) soon(); }, 4000);
     // back from 3ds Max: the scene may have changed, so read it again for the "differs" dots
@@ -74,7 +76,7 @@ export function App() {
     store.get("cards", {} as Record<string, CardPref>).then(setPrefsState);
     store.get("order", [] as string[]).then(setOrderState);
     store.get("folded", [] as string[]).then((f) => setFolded(new Set(f)));
-    window.sm?.status().then((s) => setOnTop(s.onTop));
+    window.sm?.status().then((s) => { setOnTop(s.onTop); setWnd({ owned: s.owned, rolled: s.rolled, attach: s.attach }); });
     return () => { alive = false; off(); window.clearInterval(retry); window.removeEventListener("focus", soon); };
   }, [refresh]);
 
@@ -183,17 +185,17 @@ export function App() {
   };
 
   return (
-    <div className="app" onKeyDown={onKey} tabIndex={-1}>
+    <div className={"app" + (wnd.rolled ? " rolled" : "")} onKeyDown={onKey} tabIndex={-1}>
       <header className="titlebar">
         <Icon name="setups" size={16} color="#64d2ff" />
         <span className="title">Scene Manager</span>
         {state?.file && <span className="muted file">{state.file}</span>}
         <span className="grow" />
         {inApp && <>
-          <button className={"win-btn" + (onTop ? " on" : "")} title={onTop ? "Always on top: on" : "Always on top: off"}
+          <button className={"win-btn pin" + (onTop ? " on" : "")} title={onTop ? "Above all programs: on" : "Above all programs: off (stays above 3ds Max)"}
             onClick={() => window.sm!.win.setOnTop(!onTop).then(setOnTop)}><Icon name="pin" size={15} /></button>
-          <button className="win-btn" title="Minimise" onClick={() => window.sm!.win.minimize()}><Icon name="minimize" size={15} /></button>
-          <button className="win-btn" title="Maximise" onClick={() => window.sm!.win.maximize()}><Icon name="maximize" size={15} /></button>
+          <button className="win-btn" title={wnd.rolled ? "Open" : "Roll up to the title bar"} onClick={() => window.sm!.win.minimize()}><Icon name={wnd.rolled ? "maximize" : "minimize"} size={15} /></button>
+          <button className="win-btn max" title="Maximise" onClick={() => window.sm!.win.maximize()}><Icon name="maximize" size={15} /></button>
           <button className="win-btn close" title="Close" onClick={() => window.sm!.win.close()}><Icon name="close" size={15} /></button>
         </>}
       </header>
@@ -288,7 +290,9 @@ export function App() {
         ) : (
           <section className="page">
             <h1>Settings</h1>
-            {inApp && <label className="setting"><input type="checkbox" className="tick square" checked={onTop} onChange={(e) => window.sm!.win.setOnTop(e.target.checked).then(setOnTop)} /> Keep this window above other windows</label>}
+            {inApp && <label className="setting"><input type="checkbox" className="tick square" checked={onTop} onChange={(e) => window.sm!.win.setOnTop(e.target.checked).then(setOnTop)} /> Keep this window above all programs, not only 3ds Max</label>}
+            {inApp && <label className="setting"><input type="checkbox" className="tick square" checked={wnd.attach} onChange={(e) => window.sm!.win.setAttach(e.target.checked)} /> Attach this window to 3ds Max (stays above it, hides and returns with it)
+              {wnd.attach && !wnd.owned && online && <span className="muted"> · not attached, see docs/app.md</span>}</label>}
             <p className="muted">Card places, sizes and colours are saved per user. Use a card's gear menu, or reset them all here.</p>
             <div><button className="btn" onClick={() => { setPrefs({}); setOrder([]); flash("Card layout reset."); }}>Reset card layout</button></div>
           </section>

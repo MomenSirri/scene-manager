@@ -12,6 +12,7 @@
     "dist": "npm run build && electron-builder --win portable --x64"
   },
   "dependencies": {
+    "koffi": "^3.3.8",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -29,7 +30,9 @@
     "productName": "Scene Manager",
     "files": [
       "dist/**",
-      "electron/**"
+      "electron/**",
+      "node_modules/koffi/**",
+      "node_modules/@koromix/koffi-win32-x64/**"
     ],
     "directories": {
       "output": "release"
@@ -40,6 +43,14 @@
     },
     "portable": {
       "artifactName": "SceneManager.exe"
-    }
+    },
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/koffi/**",
+      "node_modules/@koromix/**"
+    ]
+  },
+  "optionalDependencies": {
+    "@koromix/koffi-win32-x64": "3.3.8"
   }
 }
