@@ -9,7 +9,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "start": "npm run build && electron .",
-    "dist": "npm run build && electron-builder --win portable --x64"
+    "dist": "npm run build && electron-builder --win portable --x64",
+    "build:win": "npm install --force --no-save @koromix/koffi-win32-x64@3.3.8 && vite build && electron-builder --win dir --x64 && node tools/check-build.cjs"
   },
   "dependencies": {
     "koffi": "^3.3.8",

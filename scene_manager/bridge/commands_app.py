@@ -1,8 +1,9 @@
-"""Lets the Scene Manager app window follow 3ds Max (Windows only).
+"""Makes the Scene Manager app window a tool window of 3ds Max (Windows only).
 
-`ui_app_attach` is the handshake: the app sends its window handle and gets the 3ds Max one back. The app then keeps
-itself above 3ds Max and hides while Max is minimized (app/electron/main.cjs `follow`). The app window is NOT made
-an owned window of 3ds Max: that was tried and pressing the app's title bar minimized Max.
+`ui_app_attach` is the handshake: the app sends its window handle and gets the 3ds Max main window back. The app then
+makes 3ds Max the owner of its window (Win32 GWLP_HWNDPARENT, see app/electron/main.cjs), the relation a MAXScript
+or Qt tool dialog has to Max: always above Max, minimized and restored with it, no taskbar button of its own.
+With `from_max` 3ds Max sets the owner itself, for when the app is not allowed to (Max running as administrator).
 """
 import ctypes
 import sys
@@ -41,11 +42,17 @@ def max_hwnd():
 
 def ui_app_attach(hwnd=0, from_max=False, exe="", pid=0):
     """The app reports its window, program file and process, and gets the 3ds Max main window back.
-    `from_max` is no longer used."""
+    With `from_max`, 3ds Max makes itself the owner of the app window (used when the app could not)."""
     _app.update(hwnd=int(hwnd or 0), exe=str(exe or ""), pid=int(pid or 0))
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent.parent   # the Scene Manager folder: the app runs Claude from it
-    return {"max_hwnd": str(max_hwnd()), "owned": False, "root": str(root)}
+    owner, owned = max_hwnd(), False
+    u = _user32()
+    if u and _app["hwnd"] and owner and u.IsWindow(_app["hwnd"]):
+        if from_max:
+            u.SetWindowLongPtrW(_app["hwnd"], GWLP_HWNDPARENT, owner)
+        owned = (u.GetWindow(_app["hwnd"], GW_OWNER) or 0) == owner
+    return {"max_hwnd": str(owner), "owned": owned, "root": str(root)}
 
 
 def bring_to_front(exe=None):

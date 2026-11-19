@@ -65,6 +65,7 @@ function connect() {
       if (!line.trim()) continue;
       let msg; try { msg = JSON.parse(line); } catch (_) { continue; }
       if (msg.event === "show") { comeToFront(); continue; }
+      if (msg.event === "closing") releaseOwner();
       if (msg.event) { emit(msg); continue; }
       const p = pending.get(msg.id);
       if (p) { pending.delete(msg.id); msg.ok ? p.resolve(msg.result) : p.reject(new Error(msg.error || "error")); }
@@ -72,6 +73,7 @@ function connect() {
   });
   const lost = () => {
     if (sock === s) sock = null;
+    releaseOwner();
     for (const p of pending.values()) p.reject(new Error("3ds Max closed the connection"));
     pending.clear();
     setConnected(false);
@@ -92,12 +94,13 @@ function call(cmd, args) {
   });
 }
 
-// ---- following 3ds Max ---------------------------------------------------------------
-// The window stays above 3ds Max without being tied to it. Several times a second it looks at what Windows has in
-// front: while that is 3ds Max (any of its windows) or this app, the window is "always on top"; when another
-// program comes to the front it steps back behind it; while 3ds Max is minimized it is hidden.
-// It is deliberately NOT an owned window of 3ds Max (GWLP_HWNDPARENT): that links the input of the two programs,
-// and on a real machine pressing this window's title bar minimized 3ds Max.
+// ---- a tool window of 3ds Max ---------------------------------------------------------
+// The window is an "owned" window of the 3ds Max main window (Win32 owner, GWLP_HWNDPARENT), the same relation a
+// MAXScript or Qt tool dialog has to Max. Windows itself then does everything: the window is always above Max and
+// never above other programs, it disappears when Max is minimized and returns with it, it has no taskbar button of
+// its own, and the Max taskbar button stands for both. Nothing here watches or moves windows to get that.
+// Not owned (Settings > Attach off, not on Windows, or the owner could not be set): a normal window that floats
+// above everything unless the pin is off.
 let user32 = null;
 function win32() {
   if (user32 !== null) return user32;
@@ -108,7 +111,6 @@ function win32() {
     const lib = koffi.load("user32.dll");
     user32 = {
       SetWindowLongPtrW: lib.func("intptr_t SetWindowLongPtrW(intptr_t hWnd, int nIndex, intptr_t dwNewLong)"),
-      GetWindowLongPtrW: lib.func("intptr_t GetWindowLongPtrW(intptr_t hWnd, int nIndex)"),
       GetWindow: lib.func("intptr_t GetWindow(intptr_t hWnd, uint32_t uCmd)"),
       IsWindow: lib.func("int IsWindow(intptr_t hWnd)"),
       IsIconic: lib.func("int IsIconic(intptr_t hWnd)"),
@@ -119,9 +121,8 @@ function win32() {
   } catch (e) { log("win32 unavailable: " + e.message); }
   return user32;
 }
-const GWLP_HWNDPARENT = -8, GW_OWNER = 4, SWP_BEHIND = 0x0001 | 0x0002 | 0x0010;   // no size, no move, no activate
-let maxHwnd = 0n, maxPid = 0, owned = false, rolled = false, fullBounds = null;   // owned = following 3ds Max
-let topTries = 0, followTimer = null, hiddenForMax = false, topNow = null, lastFront = "";
+const GWLP_HWNDPARENT = -8, GW_OWNER = 4, SWP_ZONLY = 0x0001 | 0x0002 | 0x0010;   // no size, no move, no activate
+let maxHwnd = 0n, maxPid = 0, owned = false, rolled = false, fullBounds = null;   // owned = owner is 3ds Max
 
 function hwndArg(argv) {
   const a = (argv || []).find((x) => String(x).startsWith("--max-hwnd="));
@@ -131,97 +132,79 @@ function ownHwnd() {
   const b = win.getNativeWindowHandle();
   return b.length >= 8 ? b.readBigInt64LE(0) : BigInt(b.readInt32LE(0));
 }
-function pidOf(u, hwnd) {
-  try { const out = [0]; u.GetWindowThreadProcessId(hwnd, out); return out[0] >>> 0; } catch (_) { return 0; }
+function ownerNow(u) {
+  try { return BigInt(u.GetWindow(ownHwnd(), GW_OWNER) || 0); } catch (_) { return 0n; }
 }
-function setTop(on) {
-  if (topNow === on || !win || win.isDestroyed()) return;
-  topNow = on;
-  win.setAlwaysOnTop(on);
-}
-// Is the window really in the always-on-top band? Asked from Windows, not remembered: hiding and showing the
-// window (3ds Max minimized and restored) can drop it without telling us.
-function reallyTop(u, me) {
-  try { return (Number(BigInt(u.GetWindowLongPtrW(me, -20)) & 0x8n)) !== 0; } catch (_) { return topNow === true; }
-}
-function forceTop(u, me, why) {
-  log("back above 3ds Max (" + why + ")");
-  topNow = true;
-  win.setAlwaysOnTop(false); win.setAlwaysOnTop(true);
-  try { u.SetWindowPos(me, -1n, 0, 0, 0, 0, SWP_BEHIND); } catch (e) { log("forceTop: " + e.message); }   // HWND_TOPMOST
-}
-// "Hidden while 3ds Max is minimized" without hiding the window. A real hide makes Windows pick another window to
-// activate, 3ds Max answers that by restoring itself, and Max bounced back up each time it was minimized (seen in
-// the log of a real machine). So the window only becomes invisible, lets clicks through and sinks to the bottom:
-// nothing is activated or deactivated.
-function setGhost(on) {
-  if (!win || win.isDestroyed() || hiddenForMax === on) return;
-  hiddenForMax = on;
-  try {
-    win.setOpacity(on ? 0 : 1);
-    win.setIgnoreMouseEvents(on);
-    if (on) {
-      topNow = false; win.setAlwaysOnTop(false);
-      const u = win32();
-      if (u) u.SetWindowPos(ownHwnd(), 1n, 0, 0, 0, 0, SWP_BEHIND);   // HWND_BOTTOM
-    } else topNow = null;   // the next check puts it back above 3ds Max
-  } catch (e) { log("ghost: " + e.message); }
-}
-function follow() {
-  const u = win32();
-  if (!u || !win || win.isDestroyed() || !maxHwnd) return;
-  try {
-    if (!u.IsWindow(maxHwnd)) return;   // 3ds Max is closing; the bridge tells us
-    const min = !!u.IsIconic(maxHwnd);
-    if (min && !hiddenForMax) { log("3ds Max minimized: hiding"); setGhost(true); }
-    else if (!min && hiddenForMax) { log("3ds Max restored: showing"); setGhost(false); }
-    if (min) return;
-    const front = BigInt(u.GetForegroundWindow() || 0);
-    const me = ownHwnd(), pid = front ? pidOf(u, front) : 0;
-    const ours = front === me || front === maxHwnd || (pid && (pid === maxPid || pid === process.pid));
-    const who = ours ? (front === me ? "app" : "max") : "other";
-    if (who !== lastFront) { lastFront = who; log("in front: " + who + (min ? " (max minimized)" : "")); }
-    if (store.onTop === true || ours) {   // pin (above every program), or 3ds Max / the app is in front
-      if (topNow !== true) setTop(true);
-      if (reallyTop(u, me)) topTries = 0;
-      else if (topTries < 8) { topTries++; forceTop(u, me, who); }   // not endlessly, should Windows refuse
-      return;
-    }
-    topTries = 0;
-    if (front && topNow !== false) {   // another program came forward: go behind it, do not cover it
-      setTop(false);
-      u.SetWindowPos(me, front, 0, 0, 0, 0, SWP_BEHIND);
-    }
-  } catch (e) { log("follow: " + e.message); }
-}
-/** Start or stop following 3ds Max (Settings > Attach). Returns true when following. */
+/** Make 3ds Max the owner of the window, or release it (Settings > Attach off, hwnd 0). True when owned afterwards. */
 function setOwner(hwnd) {
   if (!win || win.isDestroyed()) return false;
   const u = win32();
-  clearInterval(followTimer); followTimer = null; topNow = null; lastFront = "";
   if (hwnd) maxHwnd = BigInt(hwnd);
-  owned = !!u && store.attach !== false && !!maxHwnd;
+  const want = u && store.attach !== false && maxHwnd && u.IsWindow(maxHwnd) ? maxHwnd : 0n;
   if (u) {
-    try {   // a window left owned by an earlier build is released
+    try {
       const me = ownHwnd();
-      if (BigInt(u.GetWindow(me, GW_OWNER) || 0)) u.SetWindowLongPtrW(me, GWLP_HWNDPARENT, 0n);
-    } catch (e) { log("release owner: " + e.message); }
-  }
-  if (!owned) setGhost(false);
-  win.setSkipTaskbar(owned);   // a tool window of 3ds Max: no taskbar button of its own
-  if (owned) { followTimer = setInterval(follow, 250); follow(); }
-  else setTop(store.onTop !== false);   // not following (or not on Windows): float above everything, as before
+      if (ownerNow(u) !== want) {
+        u.SetWindowLongPtrW(me, GWLP_HWNDPARENT, want);
+        if (want) u.SetWindowPos(me, 0n, 0, 0, 0, 0, SWP_ZONLY);   // HWND_TOP: Windows puts it above its owner now
+        log(want ? "owner set: 3ds Max window " + want : "owner released");
+      }
+      owned = !!want && ownerNow(u) === want;
+    } catch (e) { log("owner: " + e.message); owned = false; }
+  } else owned = false;
+  applyOnTop();
+  win.setSkipTaskbar(owned);   // an owned window has no taskbar button; said again for Electron's own bookkeeping
   return owned;
 }
-function applyOnTop() { topNow = null; if (owned) follow(); else setTop(store.onTop !== false); }
+// Owned: Windows keeps it above 3ds Max; "always on top" (above every program) only with the pin.
+// Not owned: floats above everything unless the pin was switched off.
+function applyOnTop() {
+  if (win && !win.isDestroyed()) win.setAlwaysOnTop(owned ? store.onTop === true : store.onTop !== false);
+}
+// 3ds Max is closing or the connection dropped: let go first. Windows destroys owned windows with their owner;
+// released, the app stays open and attaches again when Max is back.
+function releaseOwner() {
+  const u = win32();
+  if (!u || !win || win.isDestroyed()) return;
+  try {
+    if (ownerNow(u)) { u.SetWindowLongPtrW(ownHwnd(), GWLP_HWNDPARENT, 0n); log("owner released (3ds Max gone)"); }
+  } catch (e) { log("owner: " + e.message); }
+  owned = false;
+  win.setSkipTaskbar(false);
+  applyOnTop();
+  emit({ event: "window", ...windowState() });
+}
+
+// Read-only notes for ~/.scene_manager/app.log: which program is in front and when 3ds Max is minimized. It changes
+// nothing; it is there so a report like "Max minimized by itself" can be traced to what happened just before.
+let lastFront = "", lastMin = null;
+function watch() {
+  const u = win32();
+  if (!u || !win || win.isDestroyed() || !maxHwnd) return;
+  try {
+    if (!u.IsWindow(maxHwnd)) return;
+    const min = !!u.IsIconic(maxHwnd);
+    if (min !== lastMin) { if (lastMin !== null) log(min ? "3ds Max minimized" : "3ds Max restored"); lastMin = min; }
+    const front = BigInt(u.GetForegroundWindow() || 0);
+    const out = [0]; if (front) u.GetWindowThreadProcessId(front, out);
+    const pid = out[0] >>> 0;
+    const who = front === ownHwnd() ? "app" : front === maxHwnd ? "max" : pid && pid === maxPid ? "max (another window of it)" : pid === process.pid ? "app (another window of it)" : "other";
+    if (who !== lastFront) { lastFront = who; log("in front: " + who); }
+  } catch (_) { /* notes only */ }
+}
 async function attach() {   // after every (re)connect: Max tells us its window, we tell Max ours
   if (!win || win.isDestroyed()) return;
   try {
     const me = process.platform === "win32" ? ownHwnd().toString() : "0";
     const r = await call("ui_app_attach", { hwnd: me, exe: process.execPath, pid: process.pid });
     if (r && r.root) { store.root = r.root; saveStore(); }
-    setOwner(r && r.max_hwnd ? BigInt(r.max_hwnd) : maxHwnd);
-    log("following 3ds Max: " + owned + " (window " + maxHwnd + ", process " + maxPid + ")");
+    const target = r && r.max_hwnd ? BigInt(r.max_hwnd) : maxHwnd;
+    if (!setOwner(target) && store.attach !== false && target && win32()) {
+      // second way: 3ds Max sets the owner (needed when Max runs with higher rights than the app)
+      const r2 = await call("ui_app_attach", { hwnd: me, exe: process.execPath, pid: process.pid, from_max: true });
+      if (r2 && r2.owned) { owned = true; applyOnTop(); win.setSkipTaskbar(true); }
+    }
+    log("tool window of 3ds Max: " + owned + " (window " + maxHwnd + ", process " + maxPid + ")");
     emit({ event: "window", ...windowState() });
   } catch (_) { /* older Scene Manager code in Max: stay a normal window */ }
 }
@@ -252,7 +235,6 @@ function setRolled(on) {
 function comeToFront() {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
-  setGhost(false);
   setRolled(false);
   win.show(); win.focus();
 }
@@ -271,7 +253,8 @@ function createWindow() {
   win.setMenuBarVisibility(false);
   if (process.env.SM_DEV_URL) win.loadURL(process.env.SM_DEV_URL);
   else win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
-  win.once("ready-to-show", () => { setOwner(maxHwnd); win.show(); });
+  win.once("ready-to-show", () => { setOwner(maxHwnd); win.show(); });   // owner first: no taskbar button flashes up
+  setInterval(watch, 300);
   for (const ev of ["minimize", "restore", "maximize", "unmaximize", "hide", "show", "focus", "blur"])
     win.on(ev, () => log("window " + ev + (owned ? " (attached)" : "")));
   const remember = () => {
@@ -310,7 +293,7 @@ if (!app.requestSingleInstanceLock()) {
     ipcMain.handle("sm:attach", (_e, on) => {
       store.attach = !!on; saveStore();
       setOwner(maxHwnd); emit({ event: "window", ...windowState() });
-      if (on && connected) attach();
+      if (on && connected && !owned) attach();
       return !!on;
     });
     ipcMain.handle("sm:roll", (_e, on) => setRolled(!!on));
@@ -322,12 +305,13 @@ if (!app.requestSingleInstanceLock()) {
       if (!win || win.isDestroyed()) return;
       const p = { x: Math.round(Number(x) || 0), y: Math.round(Number(y) || 0) };
       if (phase === "start") {
+        log("title bar pressed");
         if (win.isMaximized()) { drag = null; return; }
         const b = win.getBounds();
         drag = { dx: p.x - b.x, dy: p.y - b.y, w: b.width, h: b.height };
       } else if (phase === "move" && drag) {
         win.setBounds({ x: p.x - drag.dx, y: p.y - drag.dy, width: drag.w, height: drag.h });   // size passed too: it must not creep on scaled screens
-      } else if (phase === "end") drag = null;
+      } else if (phase === "end") { if (drag) log("title bar released"); drag = null; }
     });
     ipcMain.on("sm:win", (_e, what) => {
       log("button " + what);
