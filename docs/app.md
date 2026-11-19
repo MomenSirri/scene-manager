@@ -55,25 +55,39 @@ keep their left edge and pack upward. Double-click the corner to fit the content
 Tests without Max: `python -m tests.test_bridge_events` (protocol), `python -m tests.test_ui` (Qt panel).
 Not yet run against real 3ds Max.
 
-## Following 3ds Max
+## A tool window of 3ds Max
 
-The app window stays with 3ds Max without being tied to it (`app/electron/main.cjs` `follow`, every 250 ms, koffi + user32).
+The app window is an owned window of the 3ds Max main window (Win32 owner, `GWLP_HWNDPARENT`, set in
+`app/electron/main.cjs` `setOwner` with koffi + user32). This is the relation a MAXScript or Qt tool dialog has to Max,
+and Windows does all of the window handling; the app does not watch or move windows.
 
 | Behaviour | How |
 |---|---|
-| Stays above 3ds Max | "always on top" while the foreground window belongs to 3ds Max or to the app |
-| Does not cover other programs | when another program comes to the front, always-on-top is dropped and the window is placed behind it |
-| Hides when Max is minimized, returns with it | `IsIconic` on the Max main window |
+| Always above 3ds Max, never above other programs | owned window (Windows) |
+| Minimizes with Max and returns in front of it | owned window (Windows) |
+| No taskbar button of its own; the Max button stands for both | owned window (Windows) |
 | Minimize button | rolls the window up to its title bar in place (`setRolled`) |
 | Toolbar button while the app is open | `commands_app.bring_to_front()` shows it, unrolls it and gives it focus |
 | Pin button | above all programs (off by default) |
-| Settings > Follow 3ds Max | off = free window that floats above everything |
+| Settings > Tool window of 3ds Max | off = free window that floats above everything |
+| Max closes or the bridge drops | the owner is released first (`releaseOwner`), the app stays open and attaches again |
 
 Handshake: after each connect the app calls `ui_app_attach(hwnd)` and gets the Max window handle back
-(`rt.windows.getMAXHWND()`); the Max process id comes from `bridge.json`.
+(`rt.windows.getMAXHWND()`), then sets the owner. If that fails (Max running as administrator), it asks Max to set it
+(`from_max`). The first launch gets the handle on the command line (`--max-hwnd=`), so the owner is set before the
+window is shown.
 
-Do not make the window an owned window of 3ds Max (`GWLP_HWNDPARENT`). That was the first version: it links the input of
-the two programs, and on a real machine pressing the app's title bar minimized 3ds Max (2026-11-18).
+Known cost of an owned window in another program: Windows links the input of the two, so while Max is busy
+(rendering, loading) the app reacts slowly, like any Max dialog.
+
+History (2026-11-18/19): the first owned version was replaced by a window that followed Max by polling, after a
+report that pressing the app's title bar minimized Max. The polling version needed two clicks on the taskbar to
+minimize Max and came back behind it, so ownership is back. `watch()` in main.cjs only writes notes to
+`~/.scene_manager/app.log` (who is in front, Max minimized/restored, title bar pressed) to trace such reports.
+
+Build note: the package must contain `resources/app.asar.unpacked/node_modules/@koromix/koffi-win32-x64/win32_x64/koffi.node`.
+Use `npm run build:win` (it installs that Windows binary and checks for it); without it the app logs
+"win32 unavailable" and stays a normal window.
 
 ## Environment library
 Rail button (picture icon) or the library button on any HDRI field (Environment, Dome light, GI / reflection

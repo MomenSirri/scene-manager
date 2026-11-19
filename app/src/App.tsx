@@ -312,8 +312,8 @@ export function App() {
           <section className="page">
             <h1>Settings</h1>
             {inApp && <label className="setting"><input type="checkbox" className="tick square" checked={onTop} onChange={(e) => window.sm!.win.setOnTop(e.target.checked).then(setOnTop)} /> Keep this window above all programs, not only 3ds Max</label>}
-            {inApp && <label className="setting"><input type="checkbox" className="tick square" checked={wnd.attach} onChange={(e) => window.sm!.win.setAttach(e.target.checked)} /> Follow 3ds Max (stay above it, step behind other programs, hide while Max is minimized)
-              {wnd.attach && !wnd.owned && online && <span className="muted"> · not following, see docs/app.md</span>}</label>}
+            {inApp && <label className="setting"><input type="checkbox" className="tick square" checked={wnd.attach} onChange={(e) => window.sm!.win.setAttach(e.target.checked)} /> Tool window of 3ds Max (always above Max, minimizes and returns with it)
+              {wnd.attach && !wnd.owned && online && <span className="muted"> · could not attach to 3ds Max, see docs/app.md</span>}</label>}
             <p className="muted">Card places, sizes and colours are saved per user. Use a card's gear menu, or reset them all here.</p>
             <div><button className="btn" onClick={() => { setPrefs({}); setOrder([]); flash("Card layout reset."); }}>Reset card layout</button></div>
           </section>
