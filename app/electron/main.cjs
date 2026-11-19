@@ -109,7 +109,12 @@ function win32() {
   try {
     const koffi = require("koffi");
     const lib = koffi.load("user32.dll");
+    koffi.struct("POINT", { x: "long", y: "long" });
     user32 = {
+      GetAsyncKeyState: lib.func("short GetAsyncKeyState(int vKey)"),
+      GetCursorPos: lib.func("int GetCursorPos(_Out_ POINT *p)"),
+      WindowFromPoint: lib.func("intptr_t WindowFromPoint(POINT p)"),
+      GetAncestor: lib.func("intptr_t GetAncestor(intptr_t hWnd, uint32_t flags)"),
       SetWindowLongPtrW: lib.func("intptr_t SetWindowLongPtrW(intptr_t hWnd, int nIndex, intptr_t dwNewLong)"),
       GetWindow: lib.func("intptr_t GetWindow(intptr_t hWnd, uint32_t uCmd)"),
       IsWindow: lib.func("int IsWindow(intptr_t hWnd)"),
@@ -204,6 +209,25 @@ function watch() {
     if (who !== lastFront) { lastFront = who; log("in front: " + describe(u, front)); }
   } catch (e) { if (!watch.failed) { watch.failed = true; log("watch: " + e.message); } }
 }
+// Diagnostics for "3ds Max minimizes by itself": every mouse button press anywhere (which button, where, over which
+// window) and the Windows key. Positions and window names only, nothing typed; it stays in the local app.log.
+const BUTTONS = { 1: "left", 2: "right", 4: "middle", 5: "x1", 6: "x2", 0x5b: "Win key", 0x5c: "Win key" };
+const held = {};
+function watchInput() {
+  const u = win32();
+  if (!u || !win || win.isDestroyed()) return;
+  try {
+    for (const [vk, name] of Object.entries(BUTTONS)) {
+      const down = (u.GetAsyncKeyState(Number(vk)) & 0x8000) !== 0;
+      if (down === !!held[vk]) continue;
+      held[vk] = down;
+      if (!down) { log("input: " + name + " up"); continue; }
+      const p = {}; u.GetCursorPos(p);
+      const at = BigInt(u.WindowFromPoint(p) || 0), root = at ? BigInt(u.GetAncestor(at, 2) || 0) : 0n;
+      log("input: " + name + " down at " + p.x + "," + p.y + " over " + describe(u, root || at));
+    }
+  } catch (e) { if (!watchInput.failed) { watchInput.failed = true; log("watchInput: " + e.message); } }
+}
 // What Windows tells the app window itself (Windows only): shown/hidden with its owner, activated, system commands.
 function hookMessages() {
   if (process.platform !== "win32" || !win.hookWindowMessage) return;
@@ -280,6 +304,7 @@ function createWindow() {
   else win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   win.once("ready-to-show", () => { setOwner(maxHwnd); win.show(); });   // owner first: no taskbar button flashes up
   setInterval(watch, 150);
+  setInterval(watchInput, 30);
   hookMessages();
   for (const ev of ["minimize", "restore", "maximize", "unmaximize", "hide", "show", "focus", "blur"])
     win.on(ev, () => log("window " + ev + (owned ? " (attached)" : "")));
