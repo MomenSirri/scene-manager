@@ -1,6 +1,6 @@
 // Scene Manager app: its own window, talking to 3ds Max over the local bridge (scene_manager/bridge/max_server.py).
 // 127.0.0.1 only; the port and a random token come from ~/.scene_manager/bridge.json, written by 3ds Max.
-const { app, BrowserWindow, Menu, ipcMain, nativeTheme, shell } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, nativeTheme, shell, screen } = require("electron");
 const fs = require("fs");
 const net = require("net");
 const os = require("os");
@@ -375,9 +375,19 @@ function setRolled(on) {
   emit({ event: "window", ...windowState() });
   return rolled;
 }
+/** True when a good part of the rectangle lies on one of the screens. */
+function onScreen(r) {
+  if (!r || !Number.isFinite(r.x) || !Number.isFinite(r.y)) return false;
+  const w = r.width || 620, h = r.height || 420;
+  return screen.getAllDisplays().some((d) => {
+    const a = d.workArea;
+    return r.x + w > a.x + 80 && r.x < a.x + a.width - 80 && r.y >= a.y - 20 && r.y < a.y + a.height - 40;
+  });
+}
 function comeToFront() {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
+  if (!onScreen(win.getBounds())) win.center();   // lost off screen: bring it back where it can be seen
   setRolled(false);
   win.show(); win.focus();
 }
@@ -387,7 +397,7 @@ function createWindow() {
   nativeTheme.themeSource = "dark";   // dark title bar
   Menu.setApplicationMenu(null);      // no File/Edit menu row under the title bar
   const b = { ...(store.window || {}) };
-  if (b.x <= -30000 || b.y <= -30000) { delete b.x; delete b.y; }   // saved while minimized by an older build
+  if (!onScreen(b)) { delete b.x; delete b.y; }   // saved on a screen that is gone, or while the window was parked off screen
   win = new BrowserWindow({
     width: b.width || 1240, height: b.height || 780, x: b.x, y: b.y,
     minWidth: 620, minHeight: 420,
@@ -414,7 +424,7 @@ function createWindow() {
   const remember = () => {
     if (rolled || win.isMaximized() || win.isMinimized()) return;
     const now = win.getBounds();
-    if (now.x <= -30000 || now.y <= -30000) return;   // where Windows parks a minimized window: never a place to reopen at
+    if (!onScreen(now)) return;   // parked off screen (minimized, or hidden by another tool): never a place to reopen at
     store.window = now; saveStore();
   };
   win.on("resize", remember);
