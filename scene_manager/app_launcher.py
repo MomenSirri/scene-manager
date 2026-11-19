@@ -82,6 +82,11 @@ def launch():
     if not max_server.is_running():
         max_server.start()
     from .bridge import commands_app
+    try:  # diagnostics, only with ~/.scene_manager/trace_windows = "on"
+        from . import dev_trace
+        dev_trace.start(commands_app.max_hwnd()) if dev_trace.wanted() else dev_trace.stop()
+    except Exception as e:
+        print("Scene Manager: window trace not started (%s)" % e)
     exe = _app_exe()
     if exe is not None and commands_app.bring_to_front(exe):  # this build is already open: the button brings it back
         return "already open"

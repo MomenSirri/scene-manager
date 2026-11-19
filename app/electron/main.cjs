@@ -1,6 +1,6 @@
 // Scene Manager app: its own window, talking to 3ds Max over the local bridge (scene_manager/bridge/max_server.py).
 // 127.0.0.1 only; the port and a random token come from ~/.scene_manager/bridge.json, written by 3ds Max.
-const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, shell } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, shell, screen } = require("electron");
 const fs = require("fs");
 const net = require("net");
 const os = require("os");
@@ -128,6 +128,7 @@ function win32() {
       IsWindowVisible: lib.func("int IsWindowVisible(intptr_t hWnd)"),
       IsWindowEnabled: lib.func("int IsWindowEnabled(intptr_t hWnd)"),
       SetWindowPos: lib.func("int SetWindowPos(intptr_t hWnd, intptr_t hWndInsertAfter, int X, int Y, int cx, int cy, uint32_t uFlags)"),
+      kernel: { RtlMoveMemory: koffi.load("kernel32.dll").func("void RtlMoveMemory(void *dest, uintptr_t src, size_t len)") },
     };
   } catch (e) { log("win32 unavailable: " + e.message); }
   return user32;
@@ -166,6 +167,32 @@ function setOwner(hwnd) {
   applyOnTop();
   win.setSkipTaskbar(owned);   // an owned window has no taskbar button; said again for Electron's own bookkeeping
   return owned;
+}
+// Clicking the app while 3ds Max is the active program must bring both forward together. For an owned window of
+// the SAME program Windows does that by itself. Here the owner belongs to another program, and Windows then orders
+// the pair by the stack as it was: after 3ds Max has been minimized and restored, that can be the very bottom, so
+// one click on the app sent 3ds Max and the app behind every other window (it looked like a minimize). So when the
+// app window becomes the active one, it raises its owner once; Windows lifts the owner's windows with it, the app
+// included. One call per activation, nothing is polled or forced on a timer.
+const WM_ACTIVATE = 0x0006, SWP_ASYNC = 0x4000;
+function raiseWithOwner() {
+  const u = win32();
+  if (!u || !owned || !win || win.isDestroyed()) return;
+  try {
+    if (!u.IsWindow(maxHwnd) || u.IsIconic(maxHwnd)) return;
+    u.SetWindowPos(maxHwnd, 0n, 0, 0, 0, 0, SWP_ZONLY | SWP_ASYNC);   // HWND_TOP, no activation; async: the other program may be busy
+    u.SetWindowPos(ownHwnd(), 0n, 0, 0, 0, 0, SWP_ZONLY);            // and the app above the owner's other tool windows
+  } catch (e) { log("raise owner: " + e.message); }
+}
+function hookActivation() {
+  if (process.platform !== "win32" || !win.hookWindowMessage) return;
+  try {
+    win.hookWindowMessage(WM_ACTIVATE, (w) => {
+      let state = 0;
+      try { state = w.readUInt16LE(0); } catch (_) { /* no data */ }
+      if (state !== 0) raiseWithOwner();   // WA_ACTIVE or WA_CLICKACTIVE
+    });
+  } catch (e) { log("activation hook: " + e.message); }
 }
 // Owned: Windows keeps it above 3ds Max; "always on top" (above every program) only with the pin.
 // Not owned: floats above everything unless the pin was switched off.
@@ -287,12 +314,23 @@ function survey() {
 // What Windows tells the app window itself (Windows only): shown/hidden with its owner, activated, system commands.
 function hookMessages() {
   if (process.platform !== "win32" || !win.hookWindowMessage) return;
-  const names = { 0x0006: "WM_ACTIVATE", 0x000a: "WM_ENABLE", 0x0018: "WM_SHOWWINDOW", 0x001c: "WM_ACTIVATEAPP", 0x0112: "WM_SYSCOMMAND", 0x0002: "WM_DESTROY", 0x0010: "WM_CLOSE" };
+  const names = { 0x000a: "WM_ENABLE", 0x0018: "WM_SHOWWINDOW", 0x001c: "WM_ACTIVATEAPP", 0x0112: "WM_SYSCOMMAND", 0x0002: "WM_DESTROY", 0x0010: "WM_CLOSE",
+    0x0021: "WM_MOUSEACTIVATE", 0x0086: "WM_NCACTIVATE", 0x00a1: "WM_NCLBUTTONDOWN", 0x0231: "WM_ENTERSIZEMOVE", 0x0232: "WM_EXITSIZEMOVE", 0x0005: "WM_SIZE", 0x0046: "WM_WINDOWPOSCHANGING", 0x0047: "WM_WINDOWPOSCHANGED" };
   for (const [code, name] of Object.entries(names)) {
     try {
       win.hookWindowMessage(Number(code), (w, l) => {
         const num = (b) => { try { return "0x" + (b.length >= 8 ? b.readBigUInt64LE(0) : BigInt(b.readUInt32LE(0))).toString(16); } catch (_) { return "?"; } };
-        log("msg " + name + " w=" + num(w) + " l=" + num(l));
+        let extra = "";
+        if (name.startsWith("WM_WINDOWPOS")) {   // WINDOWPOS: hwnd, hwndInsertAfter, x, y, cx, cy, flags
+          try {
+            const k = win32().kernel, buf = Buffer.alloc(40);
+            k.RtlMoveMemory(buf, l.readBigUInt64LE(0), 40);
+            const flags = buf.readUInt32LE(32);
+            if (flags & 0x4) return;   // SWP_NOZORDER: its place in the stack does not change
+            extra = " after=" + buf.readBigUInt64LE(8) + " flags=0x" + flags.toString(16) + " foreground " + BigInt(win32().GetForegroundWindow() || 0);
+          } catch (e) { extra = " (" + e.message + ")"; }
+        }
+        log("msg " + name + " w=" + num(w) + " l=" + num(l) + extra);
       });
     } catch (e) { log("hook " + name + ": " + e.message); }
   }
@@ -337,9 +375,19 @@ function setRolled(on) {
   emit({ event: "window", ...windowState() });
   return rolled;
 }
+/** True when a good part of the rectangle lies on one of the screens. */
+function onScreen(r) {
+  if (!r || !Number.isFinite(r.x) || !Number.isFinite(r.y)) return false;
+  const w = r.width || 620, h = r.height || 420;
+  return screen.getAllDisplays().some((d) => {
+    const a = d.workArea;
+    return r.x + w > a.x + 80 && r.x < a.x + a.width - 80 && r.y >= a.y - 20 && r.y < a.y + a.height - 40;
+  });
+}
 function comeToFront() {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
+  if (!onScreen(win.getBounds())) win.center();   // lost off screen: bring it back where it can be seen
   setRolled(false);
   win.show(); win.focus();
 }
@@ -348,7 +396,8 @@ function comeToFront() {
 function createWindow() {
   nativeTheme.themeSource = "dark";   // dark title bar
   Menu.setApplicationMenu(null);      // no File/Edit menu row under the title bar
-  const b = store.window || {};
+  const b = { ...(store.window || {}) };
+  if (!onScreen(b)) { delete b.x; delete b.y; }   // saved on a screen that is gone, or while the window was parked off screen
   win = new BrowserWindow({
     width: b.width || 1240, height: b.height || 780, x: b.x, y: b.y,
     minWidth: 620, minHeight: 420,
@@ -366,13 +415,17 @@ function createWindow() {
   // Also switched on by a file ~/.scene_manager/trace_windows whose text starts with "on" (no restart of 3ds Max needed, only of the app).
   let traceFile = "";
   try { traceFile = fs.readFileSync(path.join(HOME, "trace_windows"), "utf8").trim(); } catch (_) { /* no file */ }
+  hookActivation();
   if (store.debugWindow === true || /^on\b/i.test(traceFile)) {
     setInterval(watch, 150); setInterval(watchInput, 30); setInterval(survey, 200); hookMessages();
   }
   for (const ev of ["minimize", "restore", "maximize", "unmaximize", "hide", "show", "focus", "blur"])
     win.on(ev, () => log("window " + ev + (owned ? " (attached)" : "")));
   const remember = () => {
-    if (!rolled && !win.isMaximized() && !win.isMinimized()) { store.window = win.getBounds(); saveStore(); }
+    if (rolled || win.isMaximized() || win.isMinimized()) return;
+    const now = win.getBounds();
+    if (!onScreen(now)) return;   // parked off screen (minimized, or hidden by another tool): never a place to reopen at
+    store.window = now; saveStore();
   };
   win.on("resize", remember);
   win.on("move", remember);
