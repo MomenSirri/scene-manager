@@ -132,7 +132,6 @@ function win32() {
   } catch (e) { log("win32 unavailable: " + e.message); }
   return user32;
 }
-const GWL_EXSTYLE = -20, WS_EX_APPWINDOW = 0x40000n;
 const GWLP_HWNDPARENT = -8, GW_OWNER = 4, SWP_ZONLY = 0x0001 | 0x0002 | 0x0010;   // no size, no move, no activate
 let maxHwnd = 0n, maxPid = 0, owned = false, rolled = false, fullBounds = null;   // owned = owner is 3ds Max
 
@@ -165,22 +164,8 @@ function setOwner(hwnd) {
     } catch (e) { log("owner: " + e.message); owned = false; }
   } else owned = false;
   applyOnTop();
-  taskbarButton();
+  win.setSkipTaskbar(owned);   // an owned window has no taskbar button; said again for Electron's own bookkeeping
   return owned;
-}
-// Its own taskbar button, also while owned by 3ds Max: Windows gives an owned window none unless it carries
-// WS_EX_APPWINDOW. With the button it minimizes to the taskbar (no small stub above it), a click on the button brings
-// it to the front, and it still stays above Max and hides and returns with it.
-function taskbarButton() {
-  if (!win || win.isDestroyed()) return;
-  const u = win32();
-  if (u) {
-    try {
-      const me = ownHwnd(), ex = BigInt(u.GetWindowLongPtrW(me, GWL_EXSTYLE));
-      if (!(ex & WS_EX_APPWINDOW)) u.SetWindowLongPtrW(me, GWL_EXSTYLE, ex | WS_EX_APPWINDOW);
-    } catch (e) { log("taskbar button: " + e.message); }
-  }
-  win.setSkipTaskbar(false);   // tells the taskbar to add the button now (the style alone is read only when a window is shown)
 }
 // Owned: Windows keeps it above 3ds Max; "always on top" (above every program) only with the pin.
 // Not owned: floats above everything unless the pin was switched off.
@@ -196,6 +181,7 @@ function releaseOwner() {
     if (ownerNow(u)) { u.SetWindowLongPtrW(ownHwnd(), GWLP_HWNDPARENT, 0n); log("owner released (3ds Max gone)"); }
   } catch (e) { log("owner: " + e.message); }
   owned = false;
+  win.setSkipTaskbar(false);
   applyOnTop();
   emit({ event: "window", ...windowState() });
 }
@@ -375,7 +361,7 @@ function createWindow() {
   win.setMenuBarVisibility(false);
   if (process.env.SM_DEV_URL) win.loadURL(process.env.SM_DEV_URL);
   else win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
-  win.once("ready-to-show", () => { setOwner(maxHwnd); win.show(); });   // owner and taskbar style first, then show
+  win.once("ready-to-show", () => { setOwner(maxHwnd); win.show(); });   // owner first: no taskbar button flashes up
   // Tracing for window reports, off unless "debugWindow": true is set in ~/.scene_manager/app_ui.json.
   // Also switched on by a file ~/.scene_manager/trace_windows whose text starts with "on" (no restart of 3ds Max needed, only of the app).
   let traceFile = "";
