@@ -218,7 +218,9 @@ function watchInput() {
   if (!u || !win || win.isDestroyed()) return;
   try {
     for (const [vk, name] of Object.entries(BUTTONS)) {
-      const down = (u.GetAsyncKeyState(Number(vk)) & 0x8000) !== 0;
+      const st = u.GetAsyncKeyState(Number(vk));
+      const down = (st & 0x8000) !== 0;
+      if (!down && !held[vk] && (st & 1)) log("input: " + name + " pressed and released (short click)");   // between two checks
       if (down === !!held[vk]) continue;
       held[vk] = down;
       if (!down) { log("input: " + name + " up"); continue; }
@@ -303,9 +305,8 @@ function createWindow() {
   if (process.env.SM_DEV_URL) win.loadURL(process.env.SM_DEV_URL);
   else win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   win.once("ready-to-show", () => { setOwner(maxHwnd); win.show(); });   // owner first: no taskbar button flashes up
-  setInterval(watch, 150);
-  setInterval(watchInput, 30);
-  hookMessages();
+  // Tracing for window reports, off unless "debugWindow": true is set in ~/.scene_manager/app_ui.json.
+  if (store.debugWindow === true) { setInterval(watch, 150); setInterval(watchInput, 30); hookMessages(); }
   for (const ev of ["minimize", "restore", "maximize", "unmaximize", "hide", "show", "focus", "blur"])
     win.on(ev, () => log("window " + ev + (owned ? " (attached)" : "")));
   const remember = () => {

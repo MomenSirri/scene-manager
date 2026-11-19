@@ -63,8 +63,14 @@ Known cost of an owned window in another program: Windows links the input of the
 
 History (2026-11-18/19): the first owned version was replaced by a window that followed Max by polling, after a
 report that pressing the app's title bar minimized Max. The polling version needed two clicks on the taskbar to
-minimize Max and came back behind it, so ownership is back. `watch()` in main.cjs only writes notes to
-`~/.scene_manager/app.log` (who is in front, Max minimized/restored, title bar pressed) to trace such reports.
+minimize Max and came back behind it, so ownership is back. Tested on the real PC on 2026-11-19 (clicks sent by
+remote control and the user's own): clicking Max, the app or its title bar never minimizes; only a click on the Max
+taskbar icon does, which minimizes and restores both, as for any Max dialog. The earlier "title bar minimizes Max"
+report was such taskbar clicks.
+
+Tracing: set `"debugWindow": true` in `~/.scene_manager/app_ui.json` and restart the app. `app.log` then records who
+is in front, Max/app window states, the window messages the app receives and every mouse button press (position and
+window under it, nothing typed). Off by default.
 
 Build note: the package must contain `resources/app.asar.unpacked/node_modules/@koromix/koffi-win32-x64/win32_x64/koffi.node`.
 Use `npm run build:win` (it installs that Windows binary and checks for it); without it the app logs
