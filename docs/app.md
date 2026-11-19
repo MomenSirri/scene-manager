@@ -23,6 +23,25 @@ The UI is a separate Electron app, like the Scene Manager 3 beta; 3ds Max keeps 
 | Work on the UI without Max | `python tools/dev_backend.py`, then in `app/`: `npm install`, `npm run dev`, open http://127.0.0.1:5173 |
 | Rebuild the app | in `app/`: `npm run build`, `npx electron-builder --win dir --x64`, zip `release/win-unpacked` as `SceneManager-win.zip` |
 
+## Environment library
+Rail button (picture icon) or the library button on any HDRI field (Environment, Dome light, GI / reflection
+override cards). It browses the library Scene Manager already had, no second one:
+
+| Piece | Where it comes from |
+|---|---|
+| Folders | favourites in `~/.scene_manager/hdri.json` (same list the Qt browser and `list_hdris` use) + `HDRI`, `HDRIs`, `HDRI Library` or `Environments` inside the team presets folder + Recent |
+| Assets | `.hdr .exr .hdri`; "Images too" adds `.jpg .png .tif` that are not previews of an HDRI |
+| Thumbnails | a preview next to the file (`name.jpg`, `name_preview.jpg`, `_thumb`, ...) used as is when small; otherwise 3ds Max shrinks the preview or the HDRI once into `~/.scene_manager/hdri_thumbs` (cached by path + size + date) |
+| Click | `lib_apply`: stores the file on the selected setup (Environment = mode hdri; Dome = on, a dome is created if the scene has none; GI / Reflection = override on). On the active setup the scene changes at once, one undo step |
+
+Backend: `scene_manager/bridge/commands_library.py` (`lib_roots`, `lib_list`, `lib_thumbs`, `lib_add_folder`,
+`lib_remove_folder`, `lib_apply`); Claude tools in `claude_bridge/tools_library.py`. Thumbnails are made only for
+tiles on screen, with a 350 ms budget per call so 3ds Max stays responsive. Test: `python -m tests.test_library`.
+
+3ds Max calls used to make a thumbnail (`env/hdri.py _render_thumb`), not yet checked in Max: `openBitmap`,
+`bitmap w h filename:`, `copy src dst` (resizes), `save`, `close`. HDR values are clipped, no tone mapping: a
+dark or burnt thumbnail means 8-bit gamma needs handling there.
+
 ## The board
 Dots every 18 px. A card's left edge, width and height are whole dots; a new card is as tall as its module's
 rows. Drag a header or the teal corner: a glowing box and lit dots show exactly where the card lands. Cards
@@ -31,7 +50,7 @@ keep their left edge and pack upward. Double-click the corner to fit the content
 ## Status
 | Done | Not yet (phase 3) |
 |---|---|
-| setups list (search, tags, drag to move, rename, colours, keys), cards for every module, tables (lights, layers, objects), to-do, notes, add-module palette, render queue, Claude log, always on top | HDRI browser, file pickers, render progress, editors for toggles / light mix / custom properties (shown read-only), card layout tokens, import/export presets, repair missing nodes |
+| setups list (search, tags, drag to move, rename, colours, keys), cards for every module, tables (lights, layers, objects), to-do, notes, add-module palette, render queue, Claude log, always on top, environment library (HDRI browser) | file pickers, render progress, editors for toggles / light mix / custom properties (shown read-only), card layout tokens, import/export presets, repair missing nodes |
 
 Tests without Max: `python -m tests.test_bridge_events` (protocol), `python -m tests.test_ui` (Qt panel).
 Not yet run against real 3ds Max.
@@ -80,6 +99,25 @@ window under it, nothing typed). Off by default.
 Build note: the package must contain `resources/app.asar.unpacked/node_modules/@koromix/koffi-win32-x64/win32_x64/koffi.node`.
 Use `npm run build:win` (it installs that Windows binary and checks for it); without it the app logs
 "win32 unavailable" and stays a normal window.
+
+## Environment library
+Rail button (picture icon) or the library button on any HDRI field (Environment, Dome light, GI / reflection
+override cards). It browses the library Scene Manager already had, no second one:
+
+| Piece | Where it comes from |
+|---|---|
+| Folders | favourites in `~/.scene_manager/hdri.json` (same list the Qt browser and `list_hdris` use) + `HDRI`, `HDRIs`, `HDRI Library` or `Environments` inside the team presets folder + Recent |
+| Assets | `.hdr .exr .hdri`; "Images too" adds `.jpg .png .tif` that are not previews of an HDRI |
+| Thumbnails | a preview next to the file (`name.jpg`, `name_preview.jpg`, `_thumb`, ...) used as is when small; otherwise 3ds Max shrinks the preview or the HDRI once into `~/.scene_manager/hdri_thumbs` (cached by path + size + date) |
+| Click | `lib_apply`: stores the file on the selected setup (Environment = mode hdri; Dome = on, a dome is created if the scene has none; GI / Reflection = override on). On the active setup the scene changes at once, one undo step |
+
+Backend: `scene_manager/bridge/commands_library.py` (`lib_roots`, `lib_list`, `lib_thumbs`, `lib_add_folder`,
+`lib_remove_folder`, `lib_apply`); Claude tools in `claude_bridge/tools_library.py`. Thumbnails are made only for
+tiles on screen, with a 350 ms budget per call so 3ds Max stays responsive. Test: `python -m tests.test_library`.
+
+3ds Max calls used to make a thumbnail (`env/hdri.py _render_thumb`), not yet checked in Max: `openBitmap`,
+`bitmap w h filename:`, `copy src dst` (resizes), `save`, `close`. HDR values are clipped, no tone mapping: a
+dark or burnt thumbnail means 8-bit gamma needs handling there.
 
 ## The board flows
 

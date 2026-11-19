@@ -1,6 +1,6 @@
 // Scene Manager app: its own window, talking to 3ds Max over the local bridge (scene_manager/bridge/max_server.py).
 // 127.0.0.1 only; the port and a random token come from ~/.scene_manager/bridge.json, written by 3ds Max.
-const { app, BrowserWindow, Menu, ipcMain, nativeTheme, shell, screen } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, shell, screen } = require("electron");
 const fs = require("fs");
 const net = require("net");
 const os = require("os");
@@ -448,6 +448,12 @@ if (!app.requestSingleInstanceLock()) {
       return !!on;
     });
     ipcMain.handle("sm:roll", (_e, on) => setRolled(!!on));
+    // Environment library: pick a folder to add, reveal a file in Explorer. Paths only, nothing else from the disk.
+    ipcMain.handle("sm:pick-folder", async (_e, title) => {
+      const r = await dialog.showOpenDialog(win, { title: String(title || "Choose a folder"), properties: ["openDirectory"] });
+      return r.canceled || !r.filePaths.length ? "" : r.filePaths[0];
+    });
+    ipcMain.handle("sm:reveal", (_e, p) => { if (p && fs.existsSync(String(p))) shell.showItemInFolder(String(p)); });
     // The title bar is moved by us, not by Windows. As a system title bar (app-region: drag) Windows applied its
     // own title bar behaviour to it: shaking it minimizes every other window, 3ds Max included, and an attached
     // window disappears with Max. Here a press only records where the pointer is, and moves follow the pointer.
