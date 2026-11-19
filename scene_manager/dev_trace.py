@@ -14,7 +14,7 @@ from . import config
 
 _filter = None
 _NAMES = {0x0006: "WM_ACTIVATE", 0x001C: "WM_ACTIVATEAPP", 0x0086: "WM_NCACTIVATE", 0x0112: "WM_SYSCOMMAND",
-          0x0018: "WM_SHOWWINDOW", 0x0005: "WM_SIZE", 0x0046: "WM_WINDOWPOSCHANGING", 0x0007: "WM_SETFOCUS",
+          0x0018: "WM_SHOWWINDOW", 0x0005: "WM_SIZE", 0x0046: "WM_WINDOWPOSCHANGING", 0x0047: "WM_WINDOWPOSCHANGED", 0x0007: "WM_SETFOCUS",
           0x0008: "WM_KILLFOCUS", 0x0281: "WM_IME_SETCONTEXT", 0x0021: "WM_MOUSEACTIVATE"}
 _KEYS = {0x01: "LMB", 0x02: "RMB", 0x5B: "Win", 0x5C: "Win", 0x12: "Alt", 0x11: "Ctrl", 0x10: "Shift"}
 
@@ -49,15 +49,23 @@ def start(max_hwnd):
     u = ctypes.windll.user32
     u.GetAsyncKeyState.restype = ctypes.c_short
     u.GetForegroundWindow.restype = ctypes.c_void_p
+    u.GetWindow.restype = ctypes.c_void_p
+    u.GetWindow.argtypes = [ctypes.c_void_p, ctypes.c_uint]
     target = int(max_hwnd)
 
     class Filter(QtCore.QAbstractNativeEventFilter):
         def nativeEventFilter(self, event_type, message):
             try:
                 msg = wintypes.MSG.from_address(int(message))
-                if msg.message in _NAMES and int(msg.hWnd or 0) == target:
+                h = int(msg.hWnd or 0)
+                if msg.message in (0x0046, 0x0047) and h != target and int(u.GetWindow(h, 4) or 0) == target:
+                    p = _WINDOWPOS.from_address(msg.lParam)   # a window owned by Max (toolbars, dialogs)
+                    if not p.flags & 0x4:                       # only when its place in the stack changes
+                        _log("owned %d %s flags=0x%x after=%s | foreground %s" % (
+                            h, "CHANGING" if msg.message == 0x46 else "CHANGED", p.flags, p.after, u.GetForegroundWindow() or 0))
+                if msg.message in _NAMES and h == target:
                     extra = ""
-                    if msg.message == 0x0046 and msg.lParam:
+                    if msg.message in (0x0046, 0x0047) and msg.lParam:
                         p = _WINDOWPOS.from_address(msg.lParam)
                         extra = " pos=%d,%d size=%dx%d flags=0x%x after=%s" % (p.x, p.y, p.cx, p.cy, p.flags, p.after)
                     keys = "+".join(sorted({n for vk, n in _KEYS.items() if u.GetAsyncKeyState(vk) & 0x8000})) or "-"

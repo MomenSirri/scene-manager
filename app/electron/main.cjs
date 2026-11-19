@@ -128,6 +128,7 @@ function win32() {
       IsWindowVisible: lib.func("int IsWindowVisible(intptr_t hWnd)"),
       IsWindowEnabled: lib.func("int IsWindowEnabled(intptr_t hWnd)"),
       SetWindowPos: lib.func("int SetWindowPos(intptr_t hWnd, intptr_t hWndInsertAfter, int X, int Y, int cx, int cy, uint32_t uFlags)"),
+      kernel: { RtlMoveMemory: koffi.load("kernel32.dll").func("void RtlMoveMemory(void *dest, uintptr_t src, size_t len)") },
     };
   } catch (e) { log("win32 unavailable: " + e.message); }
   return user32;
@@ -288,12 +289,22 @@ function survey() {
 function hookMessages() {
   if (process.platform !== "win32" || !win.hookWindowMessage) return;
   const names = { 0x0006: "WM_ACTIVATE", 0x000a: "WM_ENABLE", 0x0018: "WM_SHOWWINDOW", 0x001c: "WM_ACTIVATEAPP", 0x0112: "WM_SYSCOMMAND", 0x0002: "WM_DESTROY", 0x0010: "WM_CLOSE",
-    0x0021: "WM_MOUSEACTIVATE", 0x0086: "WM_NCACTIVATE", 0x00a1: "WM_NCLBUTTONDOWN", 0x0231: "WM_ENTERSIZEMOVE", 0x0232: "WM_EXITSIZEMOVE", 0x0005: "WM_SIZE" };
+    0x0021: "WM_MOUSEACTIVATE", 0x0086: "WM_NCACTIVATE", 0x00a1: "WM_NCLBUTTONDOWN", 0x0231: "WM_ENTERSIZEMOVE", 0x0232: "WM_EXITSIZEMOVE", 0x0005: "WM_SIZE", 0x0046: "WM_WINDOWPOSCHANGING", 0x0047: "WM_WINDOWPOSCHANGED" };
   for (const [code, name] of Object.entries(names)) {
     try {
       win.hookWindowMessage(Number(code), (w, l) => {
         const num = (b) => { try { return "0x" + (b.length >= 8 ? b.readBigUInt64LE(0) : BigInt(b.readUInt32LE(0))).toString(16); } catch (_) { return "?"; } };
-        log("msg " + name + " w=" + num(w) + " l=" + num(l));
+        let extra = "";
+        if (name.startsWith("WM_WINDOWPOS")) {   // WINDOWPOS: hwnd, hwndInsertAfter, x, y, cx, cy, flags
+          try {
+            const k = win32().kernel, buf = Buffer.alloc(40);
+            k.RtlMoveMemory(buf, l.readBigUInt64LE(0), 40);
+            const flags = buf.readUInt32LE(32);
+            if (flags & 0x4) return;   // SWP_NOZORDER: its place in the stack does not change
+            extra = " after=" + buf.readBigUInt64LE(8) + " flags=0x" + flags.toString(16) + " foreground " + BigInt(win32().GetForegroundWindow() || 0);
+          } catch (e) { extra = " (" + e.message + ")"; }
+        }
+        log("msg " + name + " w=" + num(w) + " l=" + num(l) + extra);
       });
     } catch (e) { log("hook " + name + ": " + e.message); }
   }
