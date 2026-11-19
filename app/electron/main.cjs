@@ -379,6 +379,7 @@ function createWindow() {
   Menu.setApplicationMenu(null);      // no File/Edit menu row under the title bar
   const b = { ...(store.window || {}) };
   if (!onScreen(b)) { delete b.x; delete b.y; }   // saved on a screen that is gone, or while the window was parked off screen
+  if (b.width > 8000 || b.height > 8000) { delete b.width; delete b.height; }   // a size no screen has: saved while another tool had parked the window
   win = new BrowserWindow({
     width: b.width || 1240, height: b.height || 780, x: b.x, y: b.y,
     minWidth: 620, minHeight: 420,
@@ -404,7 +405,7 @@ function createWindow() {
   const remember = () => {
     if (rolled || win.isMaximized() || win.isMinimized()) return;
     const now = win.getBounds();
-    if (!onScreen(now)) return;   // parked off screen (minimized, or hidden by another tool): never a place to reopen at
+    if (!onScreen(now) || now.width > 8000 || now.height > 8000) return;   // parked off screen (minimized, or hidden by another tool): never a place to reopen at
     store.window = now; saveStore();
   };
   win.on("resize", remember);
