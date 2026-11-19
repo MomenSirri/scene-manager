@@ -67,9 +67,15 @@ and Windows does all of the window handling; the app does not watch or move wind
 | Minimizes with Max and returns in front of it | owned window (Windows) |
 | No taskbar button of its own; the Max button stands for both | owned window (Windows) |
 | Toolbar button while the app is open | `commands_app.bring_to_front()` shows it, unrolls it and gives it focus |
-| Pin button | above all programs (off by default) |
+| Pin button | only while NOT attached to 3ds Max: above all programs. Attached, the window is never "always on top" (see note) |
 | Settings > Tool window of 3ds Max | off = free window that floats above everything |
 | Max closes or the bridge drops | the owner is released first (`releaseOwner`), the app stays open and attaches again |
+
+**Why an attached window is never "always on top".** Electron's default always-on-top level puts the window right
+behind the Windows taskbar each time it is activated. When the taskbar is not topmost, that is the bottom of the
+window stack, and Windows moves the owner (3ds Max and all its tool windows) there too: one click on the app sent
+Max behind every other program. `applyOnTop()` in `electron/main.cjs` therefore switches it off while owned and uses
+the `screen-saver` level otherwise. To test window order by remote control, keep another normal window open behind Max.
 
 Handshake: after each connect the app calls `ui_app_attach(hwnd)` and gets the Max window handle back
 (`rt.windows.getMAXHWND()`), then sets the owner. If that fails (Max running as administrator), it asks Max to set it
@@ -113,12 +119,17 @@ tiles on screen, with a 350 ms budget per call so 3ds Max stays responsive. Test
 `bitmap w h filename:`, `copy src dst` (resizes), `save`, `close`. HDR values are clipped, no tone mapping: a
 dark or burnt thumbnail means 8-bit gamma needs handling there.
 
-## The board is a free canvas
+## The board flows
 
-- A card stays where it is dropped: `gx`, `gy` (dots) per card in `~/.scene_manager/app_ui.json` under `cards`. Drop on an occupied
-  place and it lands in the nearest empty one (`grid.ts` `freeSpot`). Cards never placed by hand are packed into two columns.
-- The board always keeps 24 empty dots right of and below the last card and scrolls both ways; dragging near an edge scrolls.
-- Nothing overlaps: a card that grows or is resized pushes the cards under it down (`grid.ts` `layout`).
+- A card keeps the column it was dropped in (`gx`, any dot; it lines up with a column edge within 4 dots) and its turn in that
+  column (from `gy`); both are stored per card in `~/.scene_manager/app_ui.json` under `cards`. It always sits right under the
+  card above it: folding or shrinking a card pulls the ones below up, unfolding or growing pushes them down (`grid.ts` `layout`).
+  There are no empty rows to park a card in.
+- While a card is dragged the others already move aside to show where it lands.
+- Window width: cards never placed by hand fill as many default columns as fit. A placed card that would stick out of a narrow
+  window moves to the column with the most room, and returns to its own column when the window is wide again (the stored
+  `gx` is kept). The board only scrolls sideways when a single card is wider than the window.
+- 8 empty dots are kept below the last card; dragging near an edge scrolls.
 - Smallest card: wide enough for its full title and for label + value + tick (15 dots, tables 22), tall enough for the header
   and about three rows. A card smaller than its rows scrolls them under a fixed header.
 

@@ -168,36 +168,17 @@ function setOwner(hwnd) {
   win.setSkipTaskbar(owned);   // an owned window has no taskbar button; said again for Electron's own bookkeeping
   return owned;
 }
-// Clicking the app while 3ds Max is the active program must bring both forward together. For an owned window of
-// the SAME program Windows does that by itself. Here the owner belongs to another program, and Windows then orders
-// the pair by the stack as it was: after 3ds Max has been minimized and restored, that can be the very bottom, so
-// one click on the app sent 3ds Max and the app behind every other window (it looked like a minimize). So when the
-// app window becomes the active one, it raises its owner once; Windows lifts the owner's windows with it, the app
-// included. One call per activation, nothing is polled or forced on a timer.
-const WM_ACTIVATE = 0x0006, SWP_ASYNC = 0x4000;
-function raiseWithOwner() {
-  const u = win32();
-  if (!u || !owned || !win || win.isDestroyed()) return;
-  try {
-    if (!u.IsWindow(maxHwnd) || u.IsIconic(maxHwnd)) return;
-    u.SetWindowPos(maxHwnd, 0n, 0, 0, 0, 0, SWP_ZONLY | SWP_ASYNC);   // HWND_TOP, no activation; async: the other program may be busy
-    u.SetWindowPos(ownHwnd(), 0n, 0, 0, 0, 0, SWP_ZONLY);            // and the app above the owner's other tool windows
-  } catch (e) { log("raise owner: " + e.message); }
-}
-function hookActivation() {
-  if (process.platform !== "win32" || !win.hookWindowMessage) return;
-  try {
-    win.hookWindowMessage(WM_ACTIVATE, (w) => {
-      let state = 0;
-      try { state = w.readUInt16LE(0); } catch (_) { /* no data */ }
-      if (state !== 0) raiseWithOwner();   // WA_ACTIVE or WA_CLICKACTIVE
-    });
-  } catch (e) { log("activation hook: " + e.message); }
-}
-// Owned: Windows keeps it above 3ds Max; "always on top" (above every program) only with the pin.
-// Not owned: floats above everything unless the pin was switched off.
+// Owned by 3ds Max: Windows already keeps the window above 3ds Max, so it is NEVER made "always on top" as well.
+// Electron's default always-on-top level re-places the window right behind the Windows taskbar every time it is
+// activated. The taskbar is not always a topmost window (it is not while a full-screen window is up), and then
+// "behind the taskbar" is the very bottom of the stack: Windows moved the owner with it, so one click on the app
+// sent 3ds Max and all its tool windows behind every other program (it looked like a minimize).
+// Not owned (Attach off, or 3ds Max gone): floats above everything unless switched off, at a level Electron does
+// not tie to the taskbar.
 function applyOnTop() {
-  if (win && !win.isDestroyed()) win.setAlwaysOnTop(owned ? store.onTop === true : store.onTop !== false);
+  if (!win || win.isDestroyed()) return;
+  if (!owned && store.onTop !== false) win.setAlwaysOnTop(true, "screen-saver");
+  else win.setAlwaysOnTop(false);
 }
 // 3ds Max is closing or the connection dropped: let go first. Windows destroys owned windows with their owner;
 // released, the app stays open and attaches again when Max is back.
@@ -352,7 +333,7 @@ async function attach() {   // after every (re)connect: Max tells us its window,
   } catch (_) { /* older Scene Manager code in Max: stay a normal window */ }
 }
 function windowState() {
-  return { owned, rolled, attach: store.attach !== false, onTop: store.onTop === true };
+  return { owned, rolled, attach: store.attach !== false, onTop: !owned && store.onTop !== false };
 }
 
 // A minimized tool window is easy to lose, so the minimize button rolls the window up to its title bar, in place.
@@ -398,6 +379,7 @@ function createWindow() {
   Menu.setApplicationMenu(null);      // no File/Edit menu row under the title bar
   const b = { ...(store.window || {}) };
   if (!onScreen(b)) { delete b.x; delete b.y; }   // saved on a screen that is gone, or while the window was parked off screen
+  if (b.width > 8000 || b.height > 8000) { delete b.width; delete b.height; }   // a size no screen has: saved while another tool had parked the window
   win = new BrowserWindow({
     width: b.width || 1240, height: b.height || 780, x: b.x, y: b.y,
     minWidth: 620, minHeight: 420,
@@ -415,7 +397,6 @@ function createWindow() {
   // Also switched on by a file ~/.scene_manager/trace_windows whose text starts with "on" (no restart of 3ds Max needed, only of the app).
   let traceFile = "";
   try { traceFile = fs.readFileSync(path.join(HOME, "trace_windows"), "utf8").trim(); } catch (_) { /* no file */ }
-  hookActivation();
   if (store.debugWindow === true || /^on\b/i.test(traceFile)) {
     setInterval(watch, 150); setInterval(watchInput, 30); setInterval(survey, 200); hookMessages();
   }
@@ -424,7 +405,7 @@ function createWindow() {
   const remember = () => {
     if (rolled || win.isMaximized() || win.isMinimized()) return;
     const now = win.getBounds();
-    if (!onScreen(now)) return;   // parked off screen (minimized, or hidden by another tool): never a place to reopen at
+    if (!onScreen(now) || now.width > 8000 || now.height > 8000) return;   // parked off screen (minimized, or hidden by another tool): never a place to reopen at
     store.window = now; saveStore();
   };
   win.on("resize", remember);
@@ -459,7 +440,7 @@ if (!app.requestSingleInstanceLock()) {
     ipcMain.handle("sm:status", () => ({ connected, ...windowState() }));
     ipcMain.handle("sm:store-get", (_e, key) => store[key]);
     ipcMain.handle("sm:store-set", (_e, key, value) => { store[key] = value; saveStore(); });
-    ipcMain.handle("sm:on-top", (_e, on) => { store.onTop = !!on; saveStore(); applyOnTop(); return !!on; });
+    ipcMain.handle("sm:on-top", (_e, on) => { store.onTop = !!on; saveStore(); applyOnTop(); return !owned && !!on; });
     ipcMain.handle("sm:attach", (_e, on) => {
       store.attach = !!on; saveStore();
       setOwner(maxHwnd); emit({ event: "window", ...windowState() });

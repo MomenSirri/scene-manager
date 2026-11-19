@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { call } from "./api";
 import { ALWAYS, Field, Switch, WIDE } from "./fields";
-import { Cell, COL, freeSpot, GAP, GRID, HEAD_H, layout, MIN_H, MIN_W, MIN_W_TABLE, px, ROOM, toDots, upDots } from "./grid";
+import { Cell, COL, GAP, GRID, HEAD_H, layout, MIN_H, MIN_W, MIN_W_TABLE, px, ROOM, toDots, upDots } from "./grid";
 import { Icon } from "./icons";
 import type { MenuItem, MenuState } from "./Menu";
 import type { CardData, CardPref, Detail, Group, ModuleSchema, Schema } from "./types";
@@ -138,7 +138,12 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
   const scrollRef = useRef<HTMLDivElement>(null);
   const [gesture, setGesture] = useState<Gesture | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
+  // Called by every card after every render: set state ONLY for a real change. (Calling the setters each time, even
+  // with the same value, could keep React re-rendering until it gave up: folding a card blanked the whole window.)
+  const seen = useRef<Record<string, string>>({});
   const onHeight = useCallback((key: string, h: number, w: number) => {
+    if (seen.current[key] === h + ":" + w) return;
+    seen.current[key] = h + ":" + w;
     setHeights((old) => (old[key] === h ? old : { ...old, [key]: h }));
     setHeadW((old) => (old[key] === w ? old : { ...old, [key]: w }));
   }, []);
@@ -164,19 +169,40 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
     // as tall as the module's rows need, rounded up to the next dot; a resized card keeps its own height
     return { w, h: p.folded ? natural : Math.max(minH, p.h ?? natural) };
   }, [prefs, limits]);
-  const cells = useMemo(() => layout(keys, sizeOf, (k) => prefs[k]), [keys, sizeOf, prefs]);
+  // dots that fit across the window: cards that would stick out move to where there is room
+  const [viewW, setViewW] = useState(0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => setViewW(Math.max(MIN_W, Math.floor((el.clientWidth - 2) / GRID)));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const rest = useMemo(() => layout(keys, sizeOf, (k) => prefs[k], viewW), [keys, sizeOf, prefs, viewW]);
 
   const local = (e: PointerEvent | React.PointerEvent) => {
     const r = boardRef.current!.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
 
-  // where the dragged card lands: the dot under it, anywhere on the board; the nearest empty space if that is taken
-  const target: Cell | null = useMemo(() => {
-    if (!gesture || gesture.kind !== "drag" || !gesture.started || !cells[gesture.key]) return null;
-    const want = { ...cells[gesture.key], gx: Math.max(0, toDots(gesture.x - gesture.dx)), gy: Math.max(0, toDots(gesture.y - gesture.dy)) };
-    return freeSpot(want, keys.filter((k) => k !== gesture.key).map((k) => cells[k]));
-  }, [gesture, keys, cells]);
+  // while a card is dragged, the others already flow around the place it would land in
+  const cells = useMemo(() => {
+    if (!gesture || gesture.kind !== "drag" || !gesture.started || !rest[gesture.key]) return rest;
+    let gx = Math.max(0, toDots(gesture.x - gesture.dx));
+    const gy = Math.max(0, toDots(gesture.y - gesture.dy));
+    // near the left edge of a column that is already there: line up with it (keeps columns straight)
+    const held = gx;
+    let near = 4;
+    for (const k of keys) {
+      if (k === gesture.key) continue;
+      const d = Math.abs(rest[k].gx - held);
+      if (d < near) { near = d; gx = rest[k].gx; }
+    }
+    return layout(keys, sizeOf, (k) => prefs[k], viewW, { key: gesture.key, gx, gy, shown: rest });
+  }, [gesture, rest, keys, sizeOf, prefs, viewW]);
+  const target: Cell | null = gesture?.kind === "drag" && gesture.started ? cells[gesture.key] ?? null : null;
 
   useEffect(() => {
     if (!gesture) return;
@@ -203,9 +229,14 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
     };
     const up = () => {
       if (gesture.kind === "drag" && target) {
-        // every card keeps the place it shows at now; only the dragged one moves
+        // every card keeps the place and turn it shows at now
         const next = { ...prefs };
-        for (const k of keys) { const c = k === gesture.key ? target : cells[k]; next[k] = { ...(next[k] || {}), gx: c.gx, gy: c.gy }; }
+        // (a card the narrow window moved aside keeps its own column for when the window is wide again)
+        for (const k of keys) {
+          const c = cells[k], own = prefs[k]?.gx;
+          const gx = k !== gesture.key && own !== undefined && viewW && own + c.w > viewW ? own : c.gx;
+          next[k] = { ...(next[k] || {}), gx, gy: c.gy };
+        }
         setPrefs(next);
       }
       setGesture(null);
@@ -235,7 +266,7 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
 
   return (
     <div className="board-scroll" ref={scrollRef}>
-      <div ref={boardRef} className={"board" + (gesture ? " busy" : "")} style={{ width: right + GRID * ROOM, height: bottom + GRID * ROOM }}>
+      <div ref={boardRef} className={"board" + (gesture ? " busy" : "")} style={{ width: right, height: bottom + GRID * ROOM }}>
         {glow && <>
           <div className="hot-dots" style={{ left: glow.left - GRID / 2, top: glow.top - GRID / 2, width: glow.width + GRID, height: glow.height + GRID }} />
           <div className={"glow" + (target ? " fill" : "") + (gesture?.kind === "resize" && gesture.atMin ? " limit" : "")} style={glow} />
