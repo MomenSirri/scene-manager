@@ -40,6 +40,34 @@ def _log(text):
         pass
 
 
+def dump_stack(why=""):
+    """Every top-level window front to back, hidden ones too: handle, process, class, title, visible, owner."""
+    try:
+        u = ctypes.windll.user32
+        u.GetTopWindow.restype = u.GetWindow.restype = ctypes.c_void_p
+        u.GetTopWindow.argtypes = [ctypes.c_void_p]
+        u.GetWindow.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        u.GetWindowLongPtrW.restype = ctypes.c_void_p
+        u.GetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        rows, h, n = [], u.GetTopWindow(None), 0
+        buf = ctypes.create_unicode_buffer(80)
+        while h and n < 1500:
+            n += 1
+            pid = wintypes.DWORD()
+            u.GetWindowThreadProcessId(ctypes.c_void_p(h), ctypes.byref(pid))
+            u.GetClassNameW(ctypes.c_void_p(h), buf, 80)
+            cls = buf.value
+            u.GetWindowTextW(ctypes.c_void_p(h), buf, 60)
+            ex = int(u.GetWindowLongPtrW(h, -20) or 0)
+            rows.append("    %d pid %d %s '%s' %s%s%s owner %s" % (
+                h, pid.value, cls, buf.value, "vis" if u.IsWindowVisible(ctypes.c_void_p(h)) else "HIDDEN",
+                " TOP" if ex & 0x8 else "", " MIN" if u.IsIconic(ctypes.c_void_p(h)) else "", u.GetWindow(h, 4) or 0))
+            h = u.GetWindow(h, 2)
+        _log("stack %s (%d windows)\n%s" % (why, n, "\n".join(rows)))
+    except Exception as e:
+        _log("stack failed: %s" % e)
+
+
 def start(max_hwnd):
     """Install the filter once. Returns True when it is running."""
     global _filter
@@ -63,6 +91,8 @@ def start(max_hwnd):
                     if not p.flags & 0x4:                       # only when its place in the stack changes
                         _log("owned %d %s flags=0x%x after=%s | foreground %s" % (
                             h, "CHANGING" if msg.message == 0x46 else "CHANGED", p.flags, p.after, u.GetForegroundWindow() or 0))
+                if h == target and msg.message == 0x001C:   # WM_ACTIVATEAPP: Max gained or lost the foreground
+                    QtCore.QTimer.singleShot(400, lambda w=msg.wParam: dump_stack("after Max %s" % ("activated" if w else "deactivated")))
                 if msg.message in _NAMES and h == target:
                     extra = ""
                     if msg.message in (0x0046, 0x0047) and msg.lParam:
@@ -82,6 +112,7 @@ def start(max_hwnd):
     _filter = Filter()
     app.installNativeEventFilter(_filter)
     _log("trace started for 3ds Max window %d" % target)
+    dump_stack("at start")
     return True
 
 
