@@ -3,6 +3,7 @@ import { call } from "./api";
 import { ALWAYS, Field, Switch, WIDE } from "./fields";
 import { Cell, COL, GAP, GRID, HEAD_H, layout, MIN_H, MIN_W, MIN_W_TABLE, px, ROOM, toDots, upDots } from "./grid";
 import { Icon } from "./icons";
+import { SunDial } from "./SunDial";
 import type { MenuItem, MenuState } from "./Menu";
 import type { CardData, CardPref, Detail, Group, ModuleSchema, Schema } from "./types";
 
@@ -85,6 +86,7 @@ function Card({ item, card, mod, group, pref, onHeight, onDragStart, onResizeSta
       </div>
       {!pref.folded && (
         <div className="card-body"><div className="card-rows">
+          {card.key === "sun" && <SunDial itemId={item.id} card={card} onSet={(values) => run("ui_set_values", { values })} />}
           {mod.props.map((p) => {
             const row = card.rows.find((r) => r.key === p.key);
             if (!row || (p.installed === false && !row.own && !row.inherited)) return null;   // other renderer, nothing stored
@@ -235,7 +237,7 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
         for (const k of keys) {
           const c = cells[k], own = prefs[k]?.gx;
           const gx = k !== gesture.key && own !== undefined && viewW && own + c.w > viewW ? own : c.gx;
-          next[k] = { ...(next[k] || {}), gx, gy: c.gy };
+          next[k] = { ...(next[k] || {}), gx, gy: c.gy, gap: c.gap };
         }
         setPrefs(next);
       }

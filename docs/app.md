@@ -121,10 +121,10 @@ dark or burnt thumbnail means 8-bit gamma needs handling there.
 
 ## The board flows
 
-- A card keeps the column it was dropped in (`gx`, any dot; it lines up with a column edge within 4 dots) and its turn in that
-  column (from `gy`); both are stored per card in `~/.scene_manager/app_ui.json` under `cards`. It always sits right under the
-  card above it: folding or shrinking a card pulls the ones below up, unfolding or growing pushes them down (`grid.ts` `layout`).
-  There are no empty rows to park a card in.
+- A card stays where it is dropped. Stored per card in `~/.scene_manager/app_ui.json` under `cards`: its column (`gx`, any dot;
+  it lines up with a column edge within 4 dots), its turn in that column (from `gy`) and the empty space left above it (`gap`).
+  The space is kept: when a card above folds or shrinks, the cards below come up by exactly that much, and go down again
+  when it unfolds or grows (`grid.ts` `layout`). Dropped onto another card, a card lands right above or below it.
 - While a card is dragged the others already move aside to show where it lands.
 - Window width: cards never placed by hand fill as many default columns as fit. A placed card that would stick out of a narrow
   window moves to the column with the most room, and returns to its own column when the window is wide again (the stored
@@ -160,3 +160,13 @@ the following messages. No API key is stored; it uses the account the CLI is sig
 
 Tested end to end on Linux (Electron + CLI + MCP server + stand-in 3ds Max): tool steps, the Allow flow and resume. Not yet run on
 Windows: finding `claude.exe` / `claude.cmd`, and `taskkill`.
+
+## Sun dial (Sun card)
+
+Our own take on the v3 "sun dial" described in docs/pulze_functional_spec.md (dome with sun path, azimuth/altitude read-outs, compass, Angles or Time & place). `app/src/SunDial.tsx`, backend `scene_manager/bridge/commands_sundial.py`.
+
+- The dial is the sky seen from above, oriented like the 3ds Max top view (+Y up). Rim = horizon, centre = overhead, rings at 30° and 60°. N/E/S/W turn with the card's North value.
+- Angles: drag the sun anywhere (Shift keeps elevation, Ctrl keeps azimuth, arrow keys nudge 1°, Shift+arrow 10°).
+- Time & place: the day's path is drawn with hour marks; the sun slides along it and a time-of-day slider sits under the dial (sunrise, sunset, highest point shown).
+- While dragging: `ui_sun_preview` moves the sun in 3ds Max (active setup only, `pymxs.undo(False)`, `redrawViews()`), one request in flight, latest value wins. On release: `ui_set_values` stores the values and applies them as one undo step.
+- `ui_sun_path` samples `env/solar.py` every 5 minutes, so the app and Max use the same formulas.
