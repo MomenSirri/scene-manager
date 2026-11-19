@@ -48,9 +48,15 @@ and Windows does all of the window handling; the app does not watch or move wind
 | Minimizes with Max and returns in front of it | owned window (Windows) |
 | No taskbar button of its own; the Max button stands for both | owned window (Windows) |
 | Toolbar button while the app is open | `commands_app.bring_to_front()` shows it, unrolls it and gives it focus |
-| Pin button | above all programs (off by default) |
+| Pin button | only while NOT attached to 3ds Max: above all programs. Attached, the window is never "always on top" (see note) |
 | Settings > Tool window of 3ds Max | off = free window that floats above everything |
 | Max closes or the bridge drops | the owner is released first (`releaseOwner`), the app stays open and attaches again |
+
+**Why an attached window is never "always on top".** Electron's default always-on-top level puts the window right
+behind the Windows taskbar each time it is activated. When the taskbar is not topmost, that is the bottom of the
+window stack, and Windows moves the owner (3ds Max and all its tool windows) there too: one click on the app sent
+Max behind every other program. `applyOnTop()` in `electron/main.cjs` therefore switches it off while owned and uses
+the `screen-saver` level otherwise. To test window order by remote control, keep another normal window open behind Max.
 
 Handshake: after each connect the app calls `ui_app_attach(hwnd)` and gets the Max window handle back
 (`rt.windows.getMAXHWND()`), then sets the owner. If that fails (Max running as administrator), it asks Max to set it

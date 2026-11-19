@@ -215,8 +215,8 @@ export function App() {
         {state?.file && <span className="muted file">{state.file}</span>}
         <span className="grow" />
         {inApp && <>
-          <button className={"win-btn pin" + (onTop ? " on" : "")} title={onTop ? "Above all programs: on" : "Above all programs: off (stays above 3ds Max)"}
-            onClick={() => window.sm!.win.setOnTop(!onTop).then(setOnTop)}><Icon name="pin" size={15} /></button>
+          {!wnd.owned && <button className={"win-btn pin" + (onTop ? " on" : "")} title={onTop ? "Above all programs: on" : "Above all programs: off"}
+            onClick={() => window.sm!.win.setOnTop(!onTop).then(setOnTop)}><Icon name="pin" size={15} /></button>}
           <button className="win-btn" title={wnd.rolled ? "Open" : "Roll up to the title bar"} onClick={() => window.sm!.win.minimize()}><Icon name={wnd.rolled ? "maximize" : "minimize"} size={15} /></button>
           <button className="win-btn max" title="Maximise" onClick={() => window.sm!.win.maximize()}><Icon name="maximize" size={15} /></button>
           <button className="win-btn close" title="Close" onClick={() => window.sm!.win.close()}><Icon name="close" size={15} /></button>
@@ -306,7 +306,7 @@ export function App() {
         ) : (
           <section className="page">
             <h1>Settings</h1>
-            {inApp && <label className="setting"><input type="checkbox" className="tick square" checked={onTop} onChange={(e) => window.sm!.win.setOnTop(e.target.checked).then(setOnTop)} /> Keep this window above all programs, not only 3ds Max</label>}
+            {inApp && !wnd.owned && <label className="setting"><input type="checkbox" className="tick square" checked={onTop} onChange={(e) => window.sm!.win.setOnTop(e.target.checked).then(setOnTop)} /> Keep this window above all programs (only while it is not a tool window of 3ds Max)</label>}
             {inApp && <label className="setting"><input type="checkbox" className="tick square" checked={wnd.attach} onChange={(e) => window.sm!.win.setAttach(e.target.checked)} /> Tool window of 3ds Max (always above Max, minimizes and returns with it)
               {wnd.attach && !wnd.owned && online && <span className="muted"> · could not attach to 3ds Max, see docs/app.md</span>}</label>}
             <p className="muted">Card places, sizes and colours are saved per user. Use a card's gear menu, or reset them all here.</p>
