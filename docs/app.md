@@ -46,7 +46,7 @@ and Windows does all of the window handling; the app does not watch or move wind
 |---|---|
 | Always above 3ds Max, never above other programs | owned window (Windows) |
 | Minimizes with Max and returns in front of it | owned window (Windows) |
-| No taskbar button of its own; the Max button stands for both | owned window (Windows) |
+| Its own taskbar button (brings it to the front, minimizes it to the taskbar) | owned window with WS_EX_APPWINDOW |
 | Toolbar button while the app is open | `commands_app.bring_to_front()` shows it, unrolls it and gives it focus |
 | Pin button | above all programs (off by default) |
 | Settings > Tool window of 3ds Max | off = free window that floats above everything |
