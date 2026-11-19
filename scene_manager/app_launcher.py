@@ -63,8 +63,11 @@ def _stop_other_builds(exe):
     at a time) and a new build never starts until the user closes the window by hand."""
     if os.name != "nt":
         return
+    # only our own builds (under ~/.scene_manager/app): other products can use the same program name
+    base = str(config.HOME / "app").rstrip("\\/") + os.sep
     script = ("Get-Process -Name 'Scene Manager' -ErrorAction SilentlyContinue | "
-              "Where-Object { $_.Path -and $_.Path -ne '%s' } | Stop-Process -Force" % exe.replace("'", "''"))
+              "Where-Object { $_.Path -and $_.Path.StartsWith('%s', [StringComparison]::OrdinalIgnoreCase) -and $_.Path -ne '%s' } | "
+              "Stop-Process -Force" % (base.replace("'", "''"), exe.replace("'", "''")))
     try:
         subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], timeout=15,
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),

@@ -1,6 +1,6 @@
 // Scene Manager app: its own window, talking to 3ds Max over the local bridge (scene_manager/bridge/max_server.py).
 // 127.0.0.1 only; the port and a random token come from ~/.scene_manager/bridge.json, written by 3ds Max.
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, shell } = require("electron");
 const fs = require("fs");
 const net = require("net");
 const os = require("os");
@@ -109,13 +109,24 @@ function win32() {
   try {
     const koffi = require("koffi");
     const lib = koffi.load("user32.dll");
+    koffi.struct("POINT", { x: "long", y: "long" });
     user32 = {
+      GetTopWindow: lib.func("intptr_t GetTopWindow(intptr_t hWnd)"),
+      GetWindowLongPtrW: lib.func("intptr_t GetWindowLongPtrW(intptr_t hWnd, int nIndex)"),
+      GetAsyncKeyState: lib.func("short GetAsyncKeyState(int vKey)"),
+      GetCursorPos: lib.func("int GetCursorPos(_Out_ POINT *p)"),
+      WindowFromPoint: lib.func("intptr_t WindowFromPoint(POINT p)"),
+      GetAncestor: lib.func("intptr_t GetAncestor(intptr_t hWnd, uint32_t flags)"),
       SetWindowLongPtrW: lib.func("intptr_t SetWindowLongPtrW(intptr_t hWnd, int nIndex, intptr_t dwNewLong)"),
       GetWindow: lib.func("intptr_t GetWindow(intptr_t hWnd, uint32_t uCmd)"),
       IsWindow: lib.func("int IsWindow(intptr_t hWnd)"),
       IsIconic: lib.func("int IsIconic(intptr_t hWnd)"),
       GetForegroundWindow: lib.func("intptr_t GetForegroundWindow()"),
       GetWindowThreadProcessId: lib.func("uint32_t GetWindowThreadProcessId(intptr_t hWnd, _Out_ uint32_t *lpdwProcessId)"),
+      GetClassNameW: lib.func("int GetClassNameW(intptr_t hWnd, void *buf, int n)"),
+      GetWindowTextW: lib.func("int GetWindowTextW(intptr_t hWnd, void *buf, int n)"),
+      IsWindowVisible: lib.func("int IsWindowVisible(intptr_t hWnd)"),
+      IsWindowEnabled: lib.func("int IsWindowEnabled(intptr_t hWnd)"),
       SetWindowPos: lib.func("int SetWindowPos(intptr_t hWnd, intptr_t hWndInsertAfter, int X, int Y, int cx, int cy, uint32_t uFlags)"),
     };
   } catch (e) { log("win32 unavailable: " + e.message); }
@@ -177,20 +188,114 @@ function releaseOwner() {
 
 // Read-only notes for ~/.scene_manager/app.log: which program is in front and when 3ds Max is minimized. It changes
 // nothing; it is there so a report like "Max minimized by itself" can be traced to what happened just before.
-let lastFront = "", lastMin = null;
+let lastFront = "", lastState = "";
+function describe(u, hwnd) {   // "class 'title' pid"
+  if (!hwnd) return "nothing";
+  const text = (fn) => { const b = Buffer.alloc(256); const n = fn(hwnd, b, 120); return b.toString("utf16le", 0, Math.max(0, n) * 2); };
+  const out = [0]; u.GetWindowThreadProcessId(hwnd, out);
+  const pid = out[0] >>> 0;
+  const whose = hwnd === ownHwnd() ? "APP" : hwnd === maxHwnd ? "MAX" : pid === maxPid ? "max-other" : pid === process.pid ? "app-other" : "other";
+  return whose + " " + text(u.GetClassNameW) + " '" + text(u.GetWindowTextW).slice(0, 40) + "' pid " + pid + " hwnd " + hwnd;
+}
 function watch() {
   const u = win32();
   if (!u || !win || win.isDestroyed() || !maxHwnd) return;
   try {
     if (!u.IsWindow(maxHwnd)) return;
-    const min = !!u.IsIconic(maxHwnd);
-    if (min !== lastMin) { if (lastMin !== null) log(min ? "3ds Max minimized" : "3ds Max restored"); lastMin = min; }
+    const me = ownHwnd();
+    const state = "max " + (u.IsIconic(maxHwnd) ? "minimized" : "open") + (u.IsWindowVisible(maxHwnd) ? "" : " hidden") + (u.IsWindowEnabled(maxHwnd) ? "" : " disabled")
+      + ", app " + (u.IsIconic(me) ? "minimized" : "open") + (u.IsWindowVisible(me) ? "" : " hidden") + (ownerNow(u) === maxHwnd ? "" : " NOT-OWNED");
+    if (state !== lastState) { lastState = state; log("state: " + state); }
     const front = BigInt(u.GetForegroundWindow() || 0);
-    const out = [0]; if (front) u.GetWindowThreadProcessId(front, out);
-    const pid = out[0] >>> 0;
-    const who = front === ownHwnd() ? "app" : front === maxHwnd ? "max" : pid && pid === maxPid ? "max (another window of it)" : pid === process.pid ? "app (another window of it)" : "other";
-    if (who !== lastFront) { lastFront = who; log("in front: " + who); }
-  } catch (_) { /* notes only */ }
+    const who = String(front);
+    if (who !== lastFront) { lastFront = who; log("in front: " + describe(u, front)); }
+  } catch (e) { if (!watch.failed) { watch.failed = true; log("watch: " + e.message); } }
+}
+// Diagnostics for "3ds Max minimizes by itself": every mouse button press anywhere (which button, where, over which
+// window) and the Windows key. Positions and window names only, nothing typed; it stays in the local app.log.
+const BUTTONS = { 1: "left", 2: "right", 4: "middle", 5: "x1", 6: "x2", 0x5b: "Win key", 0x5c: "Win key" };
+const held = {};
+function watchInput() {
+  const u = win32();
+  if (!u || !win || win.isDestroyed()) return;
+  try {
+    for (const [vk, name] of Object.entries(BUTTONS)) {
+      const st = u.GetAsyncKeyState(Number(vk));
+      const down = (st & 0x8000) !== 0;
+      if (!down && !held[vk] && (st & 1)) log("input: " + name + " pressed and released (short click)");   // between two checks
+      if (down === !!held[vk]) continue;
+      held[vk] = down;
+      if (!down) { log("input: " + name + " up"); continue; }
+      const p = {}; u.GetCursorPos(p);
+      const at = BigInt(u.WindowFromPoint(p) || 0), root = at ? BigInt(u.GetAncestor(at, 2) || 0) : 0n;
+      log("input: " + name + " down at " + p.x + "," + p.y + " over " + describe(u, root || at));
+    }
+  } catch (e) { if (!watchInput.failed) { watchInput.failed = true; log("watchInput: " + e.message); } }
+}
+// Every visible top-level window with a title, front to back, written when the list changes: program, class, title,
+// flags (TOP = always on top, TOOL = tool window, APPWIN = forced taskbar button, NOACT, MIN) and its owner. Used to
+// compare how another tool window (for example Scene Manager 3 beta) sits next to 3ds Max: read from outside, like
+// Spy++, never from that program's files.
+const exeNames = new Map();
+let kernel32 = null, lastSurvey = "";
+function exeOf(pid) {
+  if (exeNames.has(pid)) return exeNames.get(pid);
+  let name = "?";
+  try {
+    if (kernel32 === null) {
+      const k = require("koffi").load("kernel32.dll");
+      kernel32 = {
+        OpenProcess: k.func("void *OpenProcess(uint32_t access, int inherit, uint32_t pid)"),
+        QueryFullProcessImageNameW: k.func("int QueryFullProcessImageNameW(void *h, uint32_t flags, void *buf, _Inout_ uint32_t *size)"),
+        CloseHandle: k.func("int CloseHandle(void *h)"),
+      };
+    }
+    const h = kernel32.OpenProcess(0x1000, 0, pid);
+    if (h) {
+      const buf = Buffer.alloc(1040), size = [520];
+      if (kernel32.QueryFullProcessImageNameW(h, 0, buf, size)) name = path.win32.basename(buf.toString("utf16le", 0, size[0] * 2));
+      kernel32.CloseHandle(h);
+    }
+  } catch (e) { if (kernel32 === null) kernel32 = false; }
+  exeNames.set(pid, name);
+  return name;
+}
+function survey() {
+  const u = win32();
+  if (!u || !win || win.isDestroyed()) return;
+  try {
+    const text = (fn, h) => { const b = Buffer.alloc(256); const n = fn(h, b, 120); return b.toString("utf16le", 0, Math.max(0, n) * 2); };
+    const rows = [];
+    let h = BigInt(u.GetTopWindow(0n) || 0), guard = 0;
+    while (h && guard++ < 3000) {
+      if (u.IsWindowVisible(h)) {
+        const title = text(u.GetWindowTextW, h);
+        const out = [0]; u.GetWindowThreadProcessId(h, out);
+        const pid = out[0] >>> 0, owner = BigInt(u.GetWindow(h, GW_OWNER) || 0);
+        if (title || pid === maxPid || owner === maxHwnd) {
+          const ex = BigInt(u.GetWindowLongPtrW(h, -20));
+          const flags = [(ex & 0x8n) && "TOP", (ex & 0x80n) && "TOOL", (ex & 0x40000n) && "APPWIN", (ex & 0x8000000n) && "NOACT", u.IsIconic(h) && "MIN"].filter(Boolean).join("+");
+          rows.push(exeOf(pid) + " | " + text(u.GetClassNameW, h) + " | '" + title.slice(0, 36) + "' | " + (flags || "-") + " | hwnd " + h + (owner ? " owner " + owner : ""));
+        }
+      }
+      h = BigInt(u.GetWindow(h, 2) || 0);   // GW_HWNDNEXT: the next one further back
+    }
+    const all = rows.join("\n    ");
+    if (all !== lastSurvey) { lastSurvey = all; log("windows front to back (foreground " + BigInt(u.GetForegroundWindow() || 0) + "):\n    " + all); }
+  } catch (e) { if (!survey.failed) { survey.failed = true; log("survey: " + e.message); } }
+}
+// What Windows tells the app window itself (Windows only): shown/hidden with its owner, activated, system commands.
+function hookMessages() {
+  if (process.platform !== "win32" || !win.hookWindowMessage) return;
+  const names = { 0x0006: "WM_ACTIVATE", 0x000a: "WM_ENABLE", 0x0018: "WM_SHOWWINDOW", 0x001c: "WM_ACTIVATEAPP", 0x0112: "WM_SYSCOMMAND", 0x0002: "WM_DESTROY", 0x0010: "WM_CLOSE" };
+  for (const [code, name] of Object.entries(names)) {
+    try {
+      win.hookWindowMessage(Number(code), (w, l) => {
+        const num = (b) => { try { return "0x" + (b.length >= 8 ? b.readBigUInt64LE(0) : BigInt(b.readUInt32LE(0))).toString(16); } catch (_) { return "?"; } };
+        log("msg " + name + " w=" + num(w) + " l=" + num(l));
+      });
+    } catch (e) { log("hook " + name + ": " + e.message); }
+  }
 }
 async function attach() {   // after every (re)connect: Max tells us its window, we tell Max ours
   if (!win || win.isDestroyed()) return;
@@ -241,12 +346,15 @@ function comeToFront() {
 
 // ---- window ------------------------------------------------------------------------
 function createWindow() {
+  nativeTheme.themeSource = "dark";   // dark title bar
+  Menu.setApplicationMenu(null);      // no File/Edit menu row under the title bar
   const b = store.window || {};
   win = new BrowserWindow({
     width: b.width || 1240, height: b.height || 780, x: b.x, y: b.y,
     minWidth: 620, minHeight: 420,
-    frame: false, backgroundColor: "#0b0b10", show: false,
-    minimizable: false,   // see setRolled
+    // A normal Windows frame, like the other tool windows of 3ds Max: Windows moves, snaps, minimizes and
+    // maximizes it. (It used to be frameless with its own title bar and a roll-up instead of minimize.)
+    backgroundColor: "#0b0b10", show: false,
     title: "Scene Manager",
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
@@ -254,7 +362,13 @@ function createWindow() {
   if (process.env.SM_DEV_URL) win.loadURL(process.env.SM_DEV_URL);
   else win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   win.once("ready-to-show", () => { setOwner(maxHwnd); win.show(); });   // owner first: no taskbar button flashes up
-  setInterval(watch, 300);
+  // Tracing for window reports, off unless "debugWindow": true is set in ~/.scene_manager/app_ui.json.
+  // Also switched on by a file ~/.scene_manager/trace_windows whose text starts with "on" (no restart of 3ds Max needed, only of the app).
+  let traceFile = "";
+  try { traceFile = fs.readFileSync(path.join(HOME, "trace_windows"), "utf8").trim(); } catch (_) { /* no file */ }
+  if (store.debugWindow === true || /^on\b/i.test(traceFile)) {
+    setInterval(watch, 150); setInterval(watchInput, 30); setInterval(survey, 200); hookMessages();
+  }
   for (const ev of ["minimize", "restore", "maximize", "unmaximize", "hide", "show", "focus", "blur"])
     win.on(ev, () => log("window " + ev + (owned ? " (attached)" : "")));
   const remember = () => {
@@ -266,6 +380,9 @@ function createWindow() {
   win.webContents.on("will-navigate", (e) => e.preventDefault());
 }
 
+// Own profile folder. The default would be %APPDATA%\Scene Manager, the same name another product's app can use
+// (Pulze Scene Manager); two apps sharing it would share the one-instance lock and their stored data.
+try { app.setPath("userData", path.join(HOME, "electron")); } catch (_) { /* default folder */ }
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -321,7 +438,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     ipcMain.on("sm:win", (_e, what) => {
       log("button " + what);
-      if (what === "minimize") setRolled(!rolled);
+      if (what === "minimize") win.minimize();
       else if (what === "maximize") win.isMaximized() ? win.unmaximize() : win.maximize();
       else if (what === "close") win.close();
     });

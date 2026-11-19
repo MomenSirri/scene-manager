@@ -190,6 +190,8 @@ export function App() {
   };
 
   // Moving the window: the pointer is followed by the app itself (see main.cjs "sm:drag").
+  // In the app the window has the normal Windows title bar; the file name goes there.
+  useEffect(() => { if (inApp) document.title = state?.file ? `Scene Manager - ${state.file}` : "Scene Manager"; }, [state?.file]);
   const dragBar = (e: React.PointerEvent<HTMLElement>) => {
     if (!inApp || e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
     const bar = e.currentTarget, id = e.pointerId;
@@ -211,7 +213,7 @@ export function App() {
   return (
     <LibraryCtx.Provider value={openLibrary}>
     <div className={"app" + (wnd.rolled ? " rolled" : "")} onKeyDown={onKey} tabIndex={-1}>
-      <header className="titlebar" onPointerDown={dragBar} onDoubleClick={(e) => { if (inApp && !wnd.rolled && !(e.target as HTMLElement).closest("button")) window.sm!.win.maximize(); }}>
+      {!inApp && <header className="titlebar" onPointerDown={dragBar} onDoubleClick={(e) => { if (inApp && !wnd.rolled && !(e.target as HTMLElement).closest("button")) window.sm!.win.maximize(); }}>
         <Icon name="setups" size={16} color="#64d2ff" />
         <span className="title">Scene Manager</span>
         {state?.file && <span className="muted file">{state.file}</span>}
@@ -223,7 +225,7 @@ export function App() {
           <button className="win-btn max" title="Maximise" onClick={() => window.sm!.win.maximize()}><Icon name="maximize" size={15} /></button>
           <button className="win-btn close" title="Close" onClick={() => window.sm!.win.close()}><Icon name="close" size={15} /></button>
         </>}
-      </header>
+      </header>}
 
       <div className="main">
         <nav className="rail">
