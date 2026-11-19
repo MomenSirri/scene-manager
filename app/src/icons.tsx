@@ -20,6 +20,9 @@ const P: Record<string, JSX.Element> = {
   maximize: <rect x="5" y="5" width="10" height="10" rx="1.5" />,
   close: <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />,
   photo: <><rect x="3" y="4.5" width="14" height="11" rx="2" /><circle cx="7.5" cy="8.5" r="1.3" /><path d="M3.5 14l4-3.5 3 2.5 2.5-2 3.5 3" /></>,
+  library: <><rect x="3" y="4.5" width="14" height="11" rx="2" /><path d="M3 11.5c3-2.6 5.5-2.6 7 0s4-2.6 7 0" /><circle cx="13" cy="7.8" r="1.1" /></>,
+  team: <><circle cx="7.5" cy="7.5" r="2.3" /><circle cx="13.5" cy="8.5" r="1.8" /><path d="M3.5 15.5c.6-2.6 2.2-4 4-4s3.4 1.4 4 4M12 12.2c1.9-.6 3.8.5 4.5 3.3" /></>,
+  clock: <><circle cx="10" cy="10" r="6.5" /><path d="M10 6.5V10l2.5 1.8" /></>,
   pin: <path d="M7 3h6l-1 5 3 3H5l3-3zM10 11v6" />,
 };
 

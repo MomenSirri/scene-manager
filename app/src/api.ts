@@ -9,6 +9,8 @@ declare global {
       onEvent(fn: Listener): () => void;
       chat(what: "send" | "stop" | "reset" | "sign-in" | "status", text?: string, allow?: string[]): Promise<any>;
       status(): Promise<{ connected: boolean; onTop: boolean; owned: boolean; rolled: boolean; attach: boolean }>;
+      pickFolder(title?: string): Promise<string>;
+      reveal(path: string): Promise<void>;
       store: { get(key: string): Promise<any>; set(key: string, value: any): Promise<void> };
       win: { minimize(): void; maximize(): void; close(): void; setOnTop(on: boolean): Promise<boolean>; setAttach(on: boolean): Promise<boolean>; roll(on: boolean): Promise<boolean>; drag(phase: "start" | "move" | "end", x?: number, y?: number): void };
     };
@@ -30,7 +32,7 @@ export async function call<T = any>(cmd: string, args: object = {}): Promise<T> 
   const body = await r.json();
   if (!body.ok) throw new Error(body.error);
   // no push channel in the browser: tell the page to look again after anything that is not a plain read
-  if (!/^ui_(state|item|schema|thumbnail|queue)$/.test(cmd)) setTimeout(() => listeners.forEach((fn) => fn({ event: "changed" })), 0);
+  if (!/^(ui_(state|item|schema|thumbnail|queue)|lib_(roots|list|thumbs))$/.test(cmd)) setTimeout(() => listeners.forEach((fn) => fn({ event: "changed" })), 0);
   return body.result;
 }
 

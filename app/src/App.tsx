@@ -5,6 +5,7 @@ import { Icon } from "./icons";
 import { Menu, MenuItem, MenuState } from "./Menu";
 import { Tree, visibleRows } from "./Tree";
 import { Chat } from "./Chat";
+import { Library, LibraryCtx } from "./Library";
 import type { CardPref, Detail, Schema, State } from "./types";
 
 const TAG_COLORS = ["#ff453a", "#ff9f0a", "#30d158", "#2ad4c4", "#64d2ff", "#0a84ff", "#5e5ce6", "#bf5af2"];
@@ -34,6 +35,8 @@ export function App() {
   const [wnd, setWnd] = useState({ owned: false, rolled: false, attach: true });
   const [queue, setQueue] = useState<any[]>([]);
   const [busy, setBusy] = useState("");
+  const [library, setLibrary] = useState<string | null>(null);   // open environment library, aimed at this slot
+  const openLibrary = useCallback((target: string) => { setPage("setups"); setLibrary(target); }, []);
   const selRef = useRef(selected); selRef.current = selected;
   const searchRef = useRef<HTMLInputElement>(null);
   const msgTimer = useRef<number>();
@@ -206,6 +209,7 @@ export function App() {
   };
 
   return (
+    <LibraryCtx.Provider value={openLibrary}>
     <div className={"app" + (wnd.rolled ? " rolled" : "")} onKeyDown={onKey} tabIndex={-1}>
       <header className="titlebar" onPointerDown={dragBar} onDoubleClick={(e) => { if (inApp && !wnd.rolled && !(e.target as HTMLElement).closest("button")) window.sm!.win.maximize(); }}>
         <Icon name="setups" size={16} color="#64d2ff" />
@@ -223,14 +227,16 @@ export function App() {
 
       <div className="main">
         <nav className="rail">
-          <button className={page === "setups" && !category ? "on" : ""} title="Setups: all modules" onClick={() => { setPage("setups"); setCategory(null); }}><Icon name="setups" size={20} /></button>
+          <button className={page === "setups" && !category && !library ? "on" : ""} title="Setups: all modules" onClick={() => { setPage("setups"); setLibrary(null); setCategory(null); }}><Icon name="setups" size={20} /></button>
           <button className={page === "queue" ? "on" : ""} title="Render queue" onClick={() => setPage("queue")}><Icon name="render" size={20} /></button>
+          <button className={page === "setups" && library ? "on" : ""} title="Environment library: HDRIs and environments as thumbnails" disabled={!detail}
+            onClick={() => { setPage("setups"); setLibrary(library ? null : "environment"); }}><Icon name="library" size={20} /></button>
           <hr />
           <button className="add" title="Add a module to this setup or folder" disabled={!detail} onClick={() => setPalette(!palette)}><Icon name="plus" size={20} /></button>
           {schema?.groups.map((g) => (
-            <button key={g.key} className={page === "setups" && category === g.key ? "on" : ""} title={`${g.label} modules (click again for all)`}
+            <button key={g.key} className={page === "setups" && !library && category === g.key ? "on" : ""} title={`${g.label} modules (click again for all)`}
               style={page === "setups" && category === g.key ? { color: g.tint } : undefined}
-              onClick={() => { setPage("setups"); setCategory(category === g.key ? null : g.key); }}><Icon name={g.icon} size={20} /></button>))}
+              onClick={() => { setPage("setups"); setLibrary(null); setCategory(category === g.key ? null : g.key); }}><Icon name={g.icon} size={20} /></button>))}
           <span className="grow" />
           <button className={chatOpen ? "on" : ""} title="Claude: ask for changes in plain words" onClick={() => setChatOpen(!chatOpen)}><Icon name="claude" size={20} /></button>
           <button className={page === "settings" ? "on" : ""} title="Settings" onClick={() => setPage("settings")}><Icon name="settings" size={20} /></button>
@@ -265,6 +271,7 @@ export function App() {
                 onMenu={itemMenu} onMove={(id, parent, index) => run("ui_move", { id, parent, index }).catch(() => {})} />
             </aside>
 
+            {library && detail ? <Library detail={detail} target={library} setTarget={setLibrary} onClose={() => setLibrary(null)} flash={flash} openMenu={setMenu} /> :
             <section className="detail">
               {detail && item ? <>
                 <div className="detail-head">
@@ -288,7 +295,7 @@ export function App() {
                 <Board item={detail} schema={schema} category={category} prefs={prefs} setPref={setPref} setPrefs={setPrefs}
                   order={order} setOrder={setOrder} openMenu={setMenu} flash={flash} />
               </> : <p className="muted pad">No setups yet. Set up the scene in 3ds Max and press New Setup.</p>}
-            </section>
+            </section>}
           </>
         ) : page === "queue" ? (
           <section className="page">
@@ -324,6 +331,7 @@ export function App() {
       {menu && <Menu menu={menu} onClose={() => setMenu(null)} />}
       {busy && <div className="veil" />}
     </div>
+    </LibraryCtx.Provider>
   );
 }
 

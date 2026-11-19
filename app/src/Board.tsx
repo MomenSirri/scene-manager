@@ -101,7 +101,7 @@ function Card({ item, card, mod, group, pref, onHeight, onDragStart, onResizeSta
                   title="Store this value here (unticked = inherit from the folder, or leave the scene alone)"
                   onChange={(e) => e.target.checked ? run("ui_set_value", { prop: p.key, value: valueOut(p.kind, row.value) }) : run("ui_clear_value", { prop: p.key })} />
                 <div className="field">
-                  <Field p={p} row={row} nodes={item.nodes} disabled={!editable}
+                  <Field p={p} row={row} nodes={item.nodes} disabled={!editable} module={card.key}
                     onChange={(v) => run("ui_set_value", { prop: p.key, value: v })} />
                 </div>
               </div>

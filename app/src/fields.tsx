@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
+import { HdriThumb, LibraryCtx, TARGET_OF } from "./Library";
+import { Icon } from "./icons";
 import type { PropSchema, Row } from "./types";
 
 export function Switch({ on, onChange, tint, disabled, title }: { on: boolean; onChange: (v: boolean) => void; tint?: string; disabled?: boolean; title?: string }) {
@@ -168,8 +170,9 @@ export const WIDE = new Set(["table", "note", "todo", "checklist", "toggles", "l
 /** Kinds that can be edited before they are stored on the item (the first edit stores them). */
 export const ALWAYS = new Set(["table", "note", "todo"]);
 
-export function Field({ p, row, nodes, disabled, onChange }: { p: PropSchema; row: Row; nodes: Record<string, string[]>; disabled: boolean; onChange: (v: any) => void }) {
+export function Field({ p, row, nodes, disabled, onChange, module }: { p: PropSchema; row: Row; nodes: Record<string, string[]>; disabled: boolean; onChange: (v: any) => void; module?: string }) {
   const v = row.value;
+  const openLibrary = useContext(LibraryCtx);
   switch (p.kind) {
     case "int": case "float": return <NumberField p={p} value={v} onChange={onChange} disabled={disabled} />;
     case "bool": return <span className="field-switch"><Switch on={!!v} onChange={onChange} disabled={disabled} title={p.tip} /></span>;
@@ -186,7 +189,15 @@ export function Field({ p, row, nodes, disabled, onChange }: { p: PropSchema; ro
         {names.map((n) => <label key={n}><Switch on={!!(val[n] ?? scene[n])} disabled={disabled}
           onChange={(on) => onChange({ ...Object.fromEntries(names.map((k) => [k, !!(val[k] ?? scene[k])])), [n]: on })} /><span>{n}</span></label>)}</div>;
     }
-    case "text": case "path": case "hdri": case "image": case "rps":
+    case "hdri": {   // preview + the environment library; picking there stores the value on this setup
+      const target = TARGET_OF[module + "." + p.key];
+      return <span className="hdri-field">
+        <HdriThumb path={v ? String(v) : ""} />
+        <Draft value={v == null ? "" : String(v)} disabled={disabled} onCommit={onChange} title={p.tip || String(v ?? "")} />
+        {target && <button className="icon-btn small" title="Choose from the environment library" onClick={() => openLibrary(target)}><Icon name="library" size={15} /></button>}
+      </span>;
+    }
+    case "text": case "path": case "image": case "rps":
       return <Draft value={v == null ? "" : String(v)} disabled={disabled} onCommit={onChange} title={p.tip || String(v ?? "")} />;
     default: {  // kinds with their own editor in the Qt panel; shown read-only until they are ported
       const n = v && typeof v === "object" ? Object.keys(v).length : 0;

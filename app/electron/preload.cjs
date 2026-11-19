@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld("sm", {
   },
   chat: (what, text, allow) => ipcRenderer.invoke("sm:chat", what, text, allow),
   status: () => ipcRenderer.invoke("sm:status"),
+  pickFolder: (title) => ipcRenderer.invoke("sm:pick-folder", title),
+  reveal: (p) => ipcRenderer.invoke("sm:reveal", p),
   store: {
     get: (key) => ipcRenderer.invoke("sm:store-get", key),
     set: (key, value) => ipcRenderer.invoke("sm:store-set", key, value),
