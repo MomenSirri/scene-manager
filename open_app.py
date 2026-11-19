@@ -4,6 +4,9 @@ import sys
 old = sys.modules.get("scene_manager.startup")
 if old is not None and hasattr(old, "shutdown"):
     old.shutdown()
+tr = sys.modules.get("scene_manager.dev_trace")
+if tr is not None:
+    tr.stop()
 for name in [m for m in sys.modules if m == "scene_manager" or m.startswith("scene_manager.")]:
     if name.endswith("bridge.max_server"):
         try:

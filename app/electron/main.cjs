@@ -287,7 +287,8 @@ function survey() {
 // What Windows tells the app window itself (Windows only): shown/hidden with its owner, activated, system commands.
 function hookMessages() {
   if (process.platform !== "win32" || !win.hookWindowMessage) return;
-  const names = { 0x0006: "WM_ACTIVATE", 0x000a: "WM_ENABLE", 0x0018: "WM_SHOWWINDOW", 0x001c: "WM_ACTIVATEAPP", 0x0112: "WM_SYSCOMMAND", 0x0002: "WM_DESTROY", 0x0010: "WM_CLOSE" };
+  const names = { 0x0006: "WM_ACTIVATE", 0x000a: "WM_ENABLE", 0x0018: "WM_SHOWWINDOW", 0x001c: "WM_ACTIVATEAPP", 0x0112: "WM_SYSCOMMAND", 0x0002: "WM_DESTROY", 0x0010: "WM_CLOSE",
+    0x0021: "WM_MOUSEACTIVATE", 0x0086: "WM_NCACTIVATE", 0x00a1: "WM_NCLBUTTONDOWN", 0x0231: "WM_ENTERSIZEMOVE", 0x0232: "WM_EXITSIZEMOVE", 0x0005: "WM_SIZE" };
   for (const [code, name] of Object.entries(names)) {
     try {
       win.hookWindowMessage(Number(code), (w, l) => {
