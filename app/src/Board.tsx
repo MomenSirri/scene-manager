@@ -235,7 +235,7 @@ export function Board({ item, schema, category, prefs, setPref, setPrefs, order,
         for (const k of keys) {
           const c = cells[k], own = prefs[k]?.gx;
           const gx = k !== gesture.key && own !== undefined && viewW && own + c.w > viewW ? own : c.gx;
-          next[k] = { ...(next[k] || {}), gx, gy: c.gy };
+          next[k] = { ...(next[k] || {}), gx, gy: c.gy, gap: c.gap };
         }
         setPrefs(next);
       }

@@ -121,10 +121,10 @@ dark or burnt thumbnail means 8-bit gamma needs handling there.
 
 ## The board flows
 
-- A card keeps the column it was dropped in (`gx`, any dot; it lines up with a column edge within 4 dots) and its turn in that
-  column (from `gy`); both are stored per card in `~/.scene_manager/app_ui.json` under `cards`. It always sits right under the
-  card above it: folding or shrinking a card pulls the ones below up, unfolding or growing pushes them down (`grid.ts` `layout`).
-  There are no empty rows to park a card in.
+- A card stays where it is dropped. Stored per card in `~/.scene_manager/app_ui.json` under `cards`: its column (`gx`, any dot;
+  it lines up with a column edge within 4 dots), its turn in that column (from `gy`) and the empty space left above it (`gap`).
+  The space is kept: when a card above folds or shrinks, the cards below come up by exactly that much, and go down again
+  when it unfolds or grows (`grid.ts` `layout`). Dropped onto another card, a card lands right above or below it.
 - While a card is dragged the others already move aside to show where it lands.
 - Window width: cards never placed by hand fill as many default columns as fit. A placed card that would stick out of a narrow
   window moves to the column with the most room, and returns to its own column when the window is wide again (the stored

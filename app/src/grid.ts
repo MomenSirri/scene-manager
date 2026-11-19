@@ -1,8 +1,8 @@
 // The board's dot grid. Every card edge sits on a dot: left edge, width and height are whole dots.
-// The board flows: a card keeps the column it was dropped in (gx) and its turn in that column (from gy), and always
-// sits right under the card above it. A card that grows pushes the ones below down, one that folds pulls them up,
-// so there are never holes. Cards that do not fit the window's width move to the place with the most room.
-// Cards never placed by hand fill the default columns in `order`.
+// The board flows, but keeps the user's own spacing: a card keeps the column it was dropped in (gx), its turn in
+// that column (from gy) and the empty space left above it (gap). A card that grows pushes the ones below down by
+// that much, one that folds lets them come back up by that much. Cards that do not fit the window's width move to
+// the place with the most room. Cards never placed by hand fill the default columns in `order`, close together.
 export const GRID = 18;   // px between dots
 export const GAP = 1;     // dots between cards
 export const COL = 17;    // default card width in dots (306 px)
@@ -24,22 +24,25 @@ export const px = (c: Cell) => ({ left: c.gx * GRID, top: c.gy * GRID, width: c.
 export const overlaps = (a: Cell, b: Cell) =>
   a.gx < b.gx + b.w + GAP && b.gx < a.gx + a.w + GAP && a.gy < b.gy + b.h + GAP && b.gy < a.gy + a.h + GAP;
 
-export interface Pos { gx?: number; gy?: number }
-type Item = { key: string; gx?: number; gy?: number; w: number; h: number };
+export interface Pos { gx?: number; gy?: number; gap?: number }
+// gap: empty dots the user left above the card (kept when the cards above change height); want: a row to hold if free
+type Item = { key: string; gx?: number; gy?: number; gap?: number; want?: number; w: number; h: number };
+export type Placed = Cell & { gap: number };
 
 /** Cards in the turn they are placed: by hand placed ones top to bottom, then the ones never placed. */
 function sequence(order: string[], sizeOf: (k: string) => Size, posOf: (k: string) => Pos | undefined): Item[] {
   const placed: Item[] = [], loose: Item[] = [];
   for (const key of order) {
     const p = posOf(key) || {};
-    (p.gx !== undefined && p.gy !== undefined ? placed : loose).push({ key, gx: p.gx, gy: p.gy, ...sizeOf(key) });
+    // placed before gaps were stored: hold the stored row
+    (p.gx !== undefined && p.gy !== undefined ? placed : loose).push({ key, gx: p.gx, gy: p.gy, gap: p.gap, want: p.gap === undefined ? p.gy : undefined, ...sizeOf(key) });
   }
   placed.sort((a, b) => a.gy! - b.gy! || a.gx! - b.gx!);
   return [...placed, ...loose];
 }
 
-/** Drop every card in turn onto what is already there. `viewW` = dots that fit the window (0: no limit). */
-function flow(seq: Item[], viewW: number): Record<string, Cell> {
+/** Put every card in turn under what is already there, plus the space it keeps above it. `viewW` = dots that fit the window (0: no limit). */
+function flow(seq: Item[], viewW: number): Record<string, Placed> {
   const sky = new Map<number, number>();
   const top = (gx: number, w: number) => {
     let y = 0;
@@ -49,7 +52,7 @@ function flow(seq: Item[], viewW: number): Record<string, Cell> {
   const baseCols = viewW ? Math.max(1, Math.floor((viewW + GAP) / (COL + GAP))) : 2;
   const lefts = new Set<number>();
   for (let i = 0; i < baseCols; i++) lefts.add(i * (COL + GAP));
-  const out: Record<string, Cell> = {};
+  const out: Record<string, Placed> = {};
   for (const it of seq) {
     const { w, h } = it;
     const maxX = viewW ? Math.max(0, viewW - w) : Infinity;
@@ -64,10 +67,11 @@ function flow(seq: Item[], viewW: number): Record<string, Cell> {
       }
       gx = best;
     }
-    const gy = top(gx, w);
+    const under = top(gx, w);   // right under the cards above
+    const gy = it.want !== undefined ? Math.max(under, it.want) : under + (it.gap ?? 0);
     for (let i = gx; i < gx + w + GAP; i++) sky.set(i, gy + h + GAP);
     lefts.add(gx);
-    out[it.key] = { gx, gy, w, h };
+    out[it.key] = { gx, gy, w, h, gap: gy - under };
   }
   return out;
 }
@@ -75,7 +79,7 @@ function flow(seq: Item[], viewW: number): Record<string, Cell> {
 /** Where every card goes. `moved` plans a drag: that card takes its turn at the dot it is held over (before the
  *  first card under it whose middle is still below), everything else flows around it. */
 export function layout(order: string[], sizeOf: (k: string) => Size, posOf: (k: string) => Pos | undefined,
-                       viewW = 0, moved?: { key: string; gx: number; gy: number; shown: Record<string, Cell> }): Record<string, Cell> {
+                       viewW = 0, moved?: { key: string; gx: number; gy: number; shown: Record<string, Cell> }): Record<string, Placed> {
   let seq = sequence(order, sizeOf, posOf);
   if (moved) {
     const me = seq.find((i) => i.key === moved.key);
@@ -85,8 +89,9 @@ export function layout(order: string[], sizeOf: (k: string) => Size, posOf: (k: 
         .sort((a, b) => (a.c && b.c ? a.c.gy - b.c.gy || a.c.gx - b.c.gx : 0));
       const gx = viewW ? Math.min(moved.gx, Math.max(0, viewW - me.w)) : moved.gx;
       const at = rest.findIndex(({ c }) => c && c.gx < gx + me.w + GAP && gx < c.gx + c.w + GAP && c.gy + c.h / 2 > moved.gy);
-      const mine = { ...me, gx, gy: moved.gy };
-      const list = rest.map(({ i, c }) => ({ ...i, gx: c ? c.gx : i.gx }));
+      // the held card lands on the row it is held over when that is free; the others stay where they show, or move down
+      const mine = { ...me, gx, gy: moved.gy, want: moved.gy };
+      const list = rest.map(({ i, c }) => ({ ...i, gx: c ? c.gx : i.gx, want: c ? c.gy : i.want }));
       list.splice(at < 0 ? list.length : at, 0, mine);
       seq = list;
     }
