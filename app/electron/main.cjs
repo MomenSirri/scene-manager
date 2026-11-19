@@ -116,6 +116,10 @@ function win32() {
       IsIconic: lib.func("int IsIconic(intptr_t hWnd)"),
       GetForegroundWindow: lib.func("intptr_t GetForegroundWindow()"),
       GetWindowThreadProcessId: lib.func("uint32_t GetWindowThreadProcessId(intptr_t hWnd, _Out_ uint32_t *lpdwProcessId)"),
+      GetClassNameW: lib.func("int GetClassNameW(intptr_t hWnd, void *buf, int n)"),
+      GetWindowTextW: lib.func("int GetWindowTextW(intptr_t hWnd, void *buf, int n)"),
+      IsWindowVisible: lib.func("int IsWindowVisible(intptr_t hWnd)"),
+      IsWindowEnabled: lib.func("int IsWindowEnabled(intptr_t hWnd)"),
       SetWindowPos: lib.func("int SetWindowPos(intptr_t hWnd, intptr_t hWndInsertAfter, int X, int Y, int cx, int cy, uint32_t uFlags)"),
     };
   } catch (e) { log("win32 unavailable: " + e.message); }
@@ -177,20 +181,41 @@ function releaseOwner() {
 
 // Read-only notes for ~/.scene_manager/app.log: which program is in front and when 3ds Max is minimized. It changes
 // nothing; it is there so a report like "Max minimized by itself" can be traced to what happened just before.
-let lastFront = "", lastMin = null;
+let lastFront = "", lastState = "";
+function describe(u, hwnd) {   // "class 'title' pid"
+  if (!hwnd) return "nothing";
+  const text = (fn) => { const b = Buffer.alloc(256); const n = fn(hwnd, b, 120); return b.toString("utf16le", 0, Math.max(0, n) * 2); };
+  const out = [0]; u.GetWindowThreadProcessId(hwnd, out);
+  const pid = out[0] >>> 0;
+  const whose = hwnd === ownHwnd() ? "APP" : hwnd === maxHwnd ? "MAX" : pid === maxPid ? "max-other" : pid === process.pid ? "app-other" : "other";
+  return whose + " " + text(u.GetClassNameW) + " '" + text(u.GetWindowTextW).slice(0, 40) + "' pid " + pid + " hwnd " + hwnd;
+}
 function watch() {
   const u = win32();
   if (!u || !win || win.isDestroyed() || !maxHwnd) return;
   try {
     if (!u.IsWindow(maxHwnd)) return;
-    const min = !!u.IsIconic(maxHwnd);
-    if (min !== lastMin) { if (lastMin !== null) log(min ? "3ds Max minimized" : "3ds Max restored"); lastMin = min; }
+    const me = ownHwnd();
+    const state = "max " + (u.IsIconic(maxHwnd) ? "minimized" : "open") + (u.IsWindowVisible(maxHwnd) ? "" : " hidden") + (u.IsWindowEnabled(maxHwnd) ? "" : " disabled")
+      + ", app " + (u.IsIconic(me) ? "minimized" : "open") + (u.IsWindowVisible(me) ? "" : " hidden") + (ownerNow(u) === maxHwnd ? "" : " NOT-OWNED");
+    if (state !== lastState) { lastState = state; log("state: " + state); }
     const front = BigInt(u.GetForegroundWindow() || 0);
-    const out = [0]; if (front) u.GetWindowThreadProcessId(front, out);
-    const pid = out[0] >>> 0;
-    const who = front === ownHwnd() ? "app" : front === maxHwnd ? "max" : pid && pid === maxPid ? "max (another window of it)" : pid === process.pid ? "app (another window of it)" : "other";
-    if (who !== lastFront) { lastFront = who; log("in front: " + who); }
-  } catch (_) { /* notes only */ }
+    const who = String(front);
+    if (who !== lastFront) { lastFront = who; log("in front: " + describe(u, front)); }
+  } catch (e) { if (!watch.failed) { watch.failed = true; log("watch: " + e.message); } }
+}
+// What Windows tells the app window itself (Windows only): shown/hidden with its owner, activated, system commands.
+function hookMessages() {
+  if (process.platform !== "win32" || !win.hookWindowMessage) return;
+  const names = { 0x0006: "WM_ACTIVATE", 0x000a: "WM_ENABLE", 0x0018: "WM_SHOWWINDOW", 0x001c: "WM_ACTIVATEAPP", 0x0112: "WM_SYSCOMMAND", 0x0002: "WM_DESTROY", 0x0010: "WM_CLOSE" };
+  for (const [code, name] of Object.entries(names)) {
+    try {
+      win.hookWindowMessage(Number(code), (w, l) => {
+        const num = (b) => { try { return "0x" + (b.length >= 8 ? b.readBigUInt64LE(0) : BigInt(b.readUInt32LE(0))).toString(16); } catch (_) { return "?"; } };
+        log("msg " + name + " w=" + num(w) + " l=" + num(l));
+      });
+    } catch (e) { log("hook " + name + ": " + e.message); }
+  }
 }
 async function attach() {   // after every (re)connect: Max tells us its window, we tell Max ours
   if (!win || win.isDestroyed()) return;
@@ -254,7 +279,8 @@ function createWindow() {
   if (process.env.SM_DEV_URL) win.loadURL(process.env.SM_DEV_URL);
   else win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   win.once("ready-to-show", () => { setOwner(maxHwnd); win.show(); });   // owner first: no taskbar button flashes up
-  setInterval(watch, 300);
+  setInterval(watch, 150);
+  hookMessages();
   for (const ev of ["minimize", "restore", "maximize", "unmaximize", "hide", "show", "focus", "blur"])
     win.on(ev, () => log("window " + ev + (owned ? " (attached)" : "")));
   const remember = () => {
