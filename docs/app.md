@@ -81,12 +81,17 @@ Build note: the package must contain `resources/app.asar.unpacked/node_modules/@
 Use `npm run build:win` (it installs that Windows binary and checks for it); without it the app logs
 "win32 unavailable" and stays a normal window.
 
-## The board is a free canvas
+## The board flows
 
-- A card stays where it is dropped: `gx`, `gy` (dots) per card in `~/.scene_manager/app_ui.json` under `cards`. Drop on an occupied
-  place and it lands in the nearest empty one (`grid.ts` `freeSpot`). Cards never placed by hand are packed into two columns.
-- The board always keeps 24 empty dots right of and below the last card and scrolls both ways; dragging near an edge scrolls.
-- Nothing overlaps: a card that grows or is resized pushes the cards under it down (`grid.ts` `layout`).
+- A card keeps the column it was dropped in (`gx`, any dot; it lines up with a column edge within 4 dots) and its turn in that
+  column (from `gy`); both are stored per card in `~/.scene_manager/app_ui.json` under `cards`. It always sits right under the
+  card above it: folding or shrinking a card pulls the ones below up, unfolding or growing pushes them down (`grid.ts` `layout`).
+  There are no empty rows to park a card in.
+- While a card is dragged the others already move aside to show where it lands.
+- Window width: cards never placed by hand fill as many default columns as fit. A placed card that would stick out of a narrow
+  window moves to the column with the most room, and returns to its own column when the window is wide again (the stored
+  `gx` is kept). The board only scrolls sideways when a single card is wider than the window.
+- 8 empty dots are kept below the last card; dragging near an edge scrolls.
 - Smallest card: wide enough for its full title and for label + value + tick (15 dots, tables 22), tall enough for the header
   and about three rows. A card smaller than its rows scrolls them under a fixed header.
 
