@@ -1,6 +1,6 @@
 // Scene Manager app: its own window, talking to 3ds Max over the local bridge (scene_manager/bridge/max_server.py).
 // 127.0.0.1 only; the port and a random token come from ~/.scene_manager/bridge.json, written by 3ds Max.
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, nativeTheme, shell } = require("electron");
 const fs = require("fs");
 const net = require("net");
 const os = require("os");
@@ -346,12 +346,15 @@ function comeToFront() {
 
 // ---- window ------------------------------------------------------------------------
 function createWindow() {
+  nativeTheme.themeSource = "dark";   // dark title bar
+  Menu.setApplicationMenu(null);      // no File/Edit menu row under the title bar
   const b = store.window || {};
   win = new BrowserWindow({
     width: b.width || 1240, height: b.height || 780, x: b.x, y: b.y,
     minWidth: 620, minHeight: 420,
-    frame: false, backgroundColor: "#0b0b10", show: false,
-    minimizable: false,   // see setRolled
+    // A normal Windows frame, like the other tool windows of 3ds Max: Windows moves, snaps, minimizes and
+    // maximizes it. (It used to be frameless with its own title bar and a roll-up instead of minimize.)
+    backgroundColor: "#0b0b10", show: false,
     title: "Scene Manager",
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
@@ -360,8 +363,10 @@ function createWindow() {
   else win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   win.once("ready-to-show", () => { setOwner(maxHwnd); win.show(); });   // owner first: no taskbar button flashes up
   // Tracing for window reports, off unless "debugWindow": true is set in ~/.scene_manager/app_ui.json.
-  // Also switched on by an empty file ~/.scene_manager/trace_windows (no restart of 3ds Max needed, only of the app).
-  if (store.debugWindow === true || fs.existsSync(path.join(HOME, "trace_windows"))) {
+  // Also switched on by a file ~/.scene_manager/trace_windows whose text starts with "on" (no restart of 3ds Max needed, only of the app).
+  let traceFile = "";
+  try { traceFile = fs.readFileSync(path.join(HOME, "trace_windows"), "utf8").trim(); } catch (_) { /* no file */ }
+  if (store.debugWindow === true || /^on\b/i.test(traceFile)) {
     setInterval(watch, 150); setInterval(watchInput, 30); setInterval(survey, 200); hookMessages();
   }
   for (const ev of ["minimize", "restore", "maximize", "unmaximize", "hide", "show", "focus", "blur"])
@@ -427,7 +432,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     ipcMain.on("sm:win", (_e, what) => {
       log("button " + what);
-      if (what === "minimize") setRolled(!rolled);
+      if (what === "minimize") win.minimize();
       else if (what === "maximize") win.isMaximized() ? win.unmaximize() : win.maximize();
       else if (what === "close") win.close();
     });

@@ -47,7 +47,6 @@ and Windows does all of the window handling; the app does not watch or move wind
 | Always above 3ds Max, never above other programs | owned window (Windows) |
 | Minimizes with Max and returns in front of it | owned window (Windows) |
 | No taskbar button of its own; the Max button stands for both | owned window (Windows) |
-| Minimize button | rolls the window up to its title bar in place (`setRolled`) |
 | Toolbar button while the app is open | `commands_app.bring_to_front()` shows it, unrolls it and gives it focus |
 | Pin button | above all programs (off by default) |
 | Settings > Tool window of 3ds Max | off = free window that floats above everything |
@@ -68,7 +67,7 @@ remote control and the user's own): clicking Max, the app or its title bar never
 taskbar icon does, which minimizes and restores both, as for any Max dialog. The earlier "title bar minimizes Max"
 report was such taskbar clicks.
 
-Tracing: set `"debugWindow": true` in `~/.scene_manager/app_ui.json` and restart the app. `app.log` then records who
+Tracing: set `"debugWindow": true` in `~/.scene_manager/app_ui.json`, or put a file `~/.scene_manager/trace_windows` whose text starts with `on`, and restart the app. `app.log` then records who
 is in front, Max/app window states, the window messages the app receives and every mouse button press (position and
 window under it, nothing typed). Off by default.
 
@@ -87,10 +86,14 @@ Use `npm run build:win` (it installs that Windows binary and checks for it); wit
 
 ## Title bar
 
-The title bar is not a system title bar (`-webkit-app-region: drag` is not used). `App.tsx` `dragBar` follows the pointer and
-`main.cjs` `sm:drag` moves the window. Reason: as a system title bar Windows applied its own behaviour to it (shaking it minimizes
-all other windows, 3ds Max included, and the attached app window then disappears with Max). Window events and title bar buttons
-are written to `~/.scene_manager/app.log`.
+The window has the normal Windows frame (dark), like Scene Manager 3 beta: Windows moves, snaps, maximizes and
+minimizes it; the file name is in the window title. A minimized owned window becomes the small bar at the bottom left
+of the screen (standard for tool windows); the toolbar button in Max brings it back.
+
+Compared on the real PC on 2026-11-19 with a window survey (owner, flags; read from outside, nothing of the other
+product opened): the beta window is an Electron window (`Chrome_WidgetWin_1`) whose owner is the 3ds Max main window,
+not always-on-top, with the normal frame. Ours is now the same in all of these. Before, ours was frameless with its
+own title bar, moved by the app, and rolled up instead of minimizing.
 
 ## Claude chat
 
