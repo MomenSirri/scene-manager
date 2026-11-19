@@ -111,6 +111,8 @@ function win32() {
     const lib = koffi.load("user32.dll");
     koffi.struct("POINT", { x: "long", y: "long" });
     user32 = {
+      GetTopWindow: lib.func("intptr_t GetTopWindow(intptr_t hWnd)"),
+      GetWindowLongPtrW: lib.func("intptr_t GetWindowLongPtrW(intptr_t hWnd, int nIndex)"),
       GetAsyncKeyState: lib.func("short GetAsyncKeyState(int vKey)"),
       GetCursorPos: lib.func("int GetCursorPos(_Out_ POINT *p)"),
       WindowFromPoint: lib.func("intptr_t WindowFromPoint(POINT p)"),
@@ -230,6 +232,58 @@ function watchInput() {
     }
   } catch (e) { if (!watchInput.failed) { watchInput.failed = true; log("watchInput: " + e.message); } }
 }
+// Every visible top-level window with a title, front to back, written when the list changes: program, class, title,
+// flags (TOP = always on top, TOOL = tool window, APPWIN = forced taskbar button, NOACT, MIN) and its owner. Used to
+// compare how another tool window (for example Scene Manager 3 beta) sits next to 3ds Max: read from outside, like
+// Spy++, never from that program's files.
+const exeNames = new Map();
+let kernel32 = null, lastSurvey = "";
+function exeOf(pid) {
+  if (exeNames.has(pid)) return exeNames.get(pid);
+  let name = "?";
+  try {
+    if (kernel32 === null) {
+      const k = require("koffi").load("kernel32.dll");
+      kernel32 = {
+        OpenProcess: k.func("void *OpenProcess(uint32_t access, int inherit, uint32_t pid)"),
+        QueryFullProcessImageNameW: k.func("int QueryFullProcessImageNameW(void *h, uint32_t flags, void *buf, _Inout_ uint32_t *size)"),
+        CloseHandle: k.func("int CloseHandle(void *h)"),
+      };
+    }
+    const h = kernel32.OpenProcess(0x1000, 0, pid);
+    if (h) {
+      const buf = Buffer.alloc(1040), size = [520];
+      if (kernel32.QueryFullProcessImageNameW(h, 0, buf, size)) name = path.win32.basename(buf.toString("utf16le", 0, size[0] * 2));
+      kernel32.CloseHandle(h);
+    }
+  } catch (e) { if (kernel32 === null) kernel32 = false; }
+  exeNames.set(pid, name);
+  return name;
+}
+function survey() {
+  const u = win32();
+  if (!u || !win || win.isDestroyed()) return;
+  try {
+    const text = (fn, h) => { const b = Buffer.alloc(256); const n = fn(h, b, 120); return b.toString("utf16le", 0, Math.max(0, n) * 2); };
+    const rows = [];
+    let h = BigInt(u.GetTopWindow(0n) || 0), guard = 0;
+    while (h && guard++ < 3000) {
+      if (u.IsWindowVisible(h)) {
+        const title = text(u.GetWindowTextW, h);
+        const out = [0]; u.GetWindowThreadProcessId(h, out);
+        const pid = out[0] >>> 0, owner = BigInt(u.GetWindow(h, GW_OWNER) || 0);
+        if (title || pid === maxPid || owner === maxHwnd) {
+          const ex = BigInt(u.GetWindowLongPtrW(h, -20));
+          const flags = [(ex & 0x8n) && "TOP", (ex & 0x80n) && "TOOL", (ex & 0x40000n) && "APPWIN", (ex & 0x8000000n) && "NOACT", u.IsIconic(h) && "MIN"].filter(Boolean).join("+");
+          rows.push(exeOf(pid) + " | " + text(u.GetClassNameW, h) + " | '" + title.slice(0, 36) + "' | " + (flags || "-") + " | hwnd " + h + (owner ? " owner " + owner : ""));
+        }
+      }
+      h = BigInt(u.GetWindow(h, 2) || 0);   // GW_HWNDNEXT: the next one further back
+    }
+    const all = rows.join("\n    ");
+    if (all !== lastSurvey) { lastSurvey = all; log("windows front to back (foreground " + BigInt(u.GetForegroundWindow() || 0) + "):\n    " + all); }
+  } catch (e) { if (!survey.failed) { survey.failed = true; log("survey: " + e.message); } }
+}
 // What Windows tells the app window itself (Windows only): shown/hidden with its owner, activated, system commands.
 function hookMessages() {
   if (process.platform !== "win32" || !win.hookWindowMessage) return;
@@ -306,7 +360,10 @@ function createWindow() {
   else win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   win.once("ready-to-show", () => { setOwner(maxHwnd); win.show(); });   // owner first: no taskbar button flashes up
   // Tracing for window reports, off unless "debugWindow": true is set in ~/.scene_manager/app_ui.json.
-  if (store.debugWindow === true) { setInterval(watch, 150); setInterval(watchInput, 30); hookMessages(); }
+  // Also switched on by an empty file ~/.scene_manager/trace_windows (no restart of 3ds Max needed, only of the app).
+  if (store.debugWindow === true || fs.existsSync(path.join(HOME, "trace_windows"))) {
+    setInterval(watch, 150); setInterval(watchInput, 30); setInterval(survey, 200); hookMessages();
+  }
   for (const ev of ["minimize", "restore", "maximize", "unmaximize", "hide", "show", "focus", "blur"])
     win.on(ev, () => log("window " + ev + (owned ? " (attached)" : "")));
   const remember = () => {
@@ -318,6 +375,9 @@ function createWindow() {
   win.webContents.on("will-navigate", (e) => e.preventDefault());
 }
 
+// Own profile folder. The default would be %APPDATA%\Scene Manager, the same name another product's app can use
+// (Pulze Scene Manager); two apps sharing it would share the one-instance lock and their stored data.
+try { app.setPath("userData", path.join(HOME, "electron")); } catch (_) { /* default folder */ }
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
